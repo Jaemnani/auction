@@ -57,6 +57,30 @@ $PY crawler/scripts/seed.py search --court B000210 --max-pages 1
 $PY crawler/scripts/seed.py detail B000210 2023타경6292 1
 ```
 
+## 매일 자동 갱신 (cron)
+
+```bash
+# 기본 스케줄(매일 04:00)로 등록 — 멱등 (재실행해도 중복 안 됨)
+./crawler/install_cron.sh
+
+# 특정 법원만
+COURT=B000210 ./crawler/install_cron.sh
+
+# 다른 시간대
+SCHEDULE="0 5 * * *" ./crawler/install_cron.sh
+
+# 상태 확인 / 제거
+./crawler/install_cron.sh show
+./crawler/install_cron.sh uninstall
+
+# 수동 실행 (cron 거치지 않고 한 번 돌려보기)
+./crawler/run_daily.sh
+```
+
+각 실행 로그는 `crawler/data/logs/daily_<timestamp>.log`로 남고 30일 후 자동 삭제. 동시 실행은 `crawler/data/.daily.lock.d` 디렉토리 lock으로 방지.
+
+> macOS 특이사항: 노트북이 sleep 상태면 cron이 안 돌아감. 깨어있는 시간으로 잡거나, 항상 켜두는 환경에서만 사용. 또한 처음에 cron이 차단될 수 있어 System Settings → Privacy & Security → Full Disk Access에 `cron` 추가가 필요할 수 있음.
+
 ## 검증된 사실 (2026-05-02)
 
 - courtauction.go.kr는 인증/세션 불필요한 JSON API (WebSquare RIA)

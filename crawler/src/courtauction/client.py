@@ -388,6 +388,7 @@ class CourtAuctionClient:
         rate limit은 client cfg가 알아서 적용.
         """
         page_no = 1
+        cached_total: int | None = None  # 첫 페이지의 totalCnt를 정답으로 캐시
         while True:
             page = await self.search(
                 kind=kind, page_no=page_no, page_size=page_size,
@@ -397,11 +398,16 @@ class CourtAuctionClient:
 
             page_info = page.get("dma_pageInfo") or {}
             try:
-                total = int(page_info.get("totalCnt") or 0)
+                t = int(page_info.get("totalCnt") or 0)
             except (TypeError, ValueError):
-                total = 0
+                t = 0
+            # 사이트 동작: page 1 (totalYn=Y)만 진짜 totalCnt를 주고, 이후엔 0으로 옴.
+            if cached_total is None:
+                cached_total = t
+            if cached_total <= 0:
+                return                # 진짜 0건
             seen = page_no * page_size
-            if seen >= total:
+            if seen >= cached_total:
                 return
             page_no += 1
             if max_pages and page_no > max_pages:

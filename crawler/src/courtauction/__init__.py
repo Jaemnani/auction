@@ -7,6 +7,7 @@ from .client import (
     StructureChanged,
     TransientError,
 )
+from .store import Store, StoreConfig
 
 __all__ = [
     "BASE_URL",
@@ -16,4 +17,6 @@ __all__ = [
     "PermanentError",
     "StructureChanged",
     "TransientError",
+    "Store",
+    "StoreConfig",
 ]

@@ -10,3 +10,5 @@ node_modules/
 .next/
 .vercel/
 *.log
+.claude/
+*.tsbuildinfo
