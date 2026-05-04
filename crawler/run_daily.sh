@@ -17,6 +17,7 @@
 #   TIME_BUDGET=7200      전체 예산 (초). 초과 시 남은 step 건너뜀
 #   PHOTOS_PER_PROPERTY=1 매물당 사진 N장만 저장 (무료 5GB 안전), ""=전체
 #   SALES_DAYS=7          매각결과 조회 기간 (오늘 기준 N일 전까지)
+#   REVERSE_GEOCODE_LIMIT=2000  Kakao 역지오코딩 1회 처리량 (KAKAO_REST_API_KEY 필요)
 #   PYTHON=/path/...      (기본: 공용 venv)
 #
 # 모든 stdout/stderr → crawler/data/logs/daily_<timestamp>.log
@@ -45,6 +46,13 @@ trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 # --- 사전 점검 ---
 [ -x "$PYTHON" ] || { echo "[fatal] python not found: $PYTHON"; exit 1; }
 [ -f "$PROJECT_ROOT/.env" ] || { echo "[fatal] .env missing"; exit 1; }
+
+# .env 자동 로드 — cron은 sh 환경이 비어있으니 모든 키(KAKAO/DATA_GO_KR/SUPABASE)를 .env에서 읽음.
+# 이래야 cron 재설치 없이 .env 변경만으로 새 키 적용됨.
+set -a
+# shellcheck disable=SC1091
+. "$PROJECT_ROOT/.env"
+set +a
 
 # --- 설정 ---
 COURT="${COURT:-}"
@@ -129,6 +137,15 @@ drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUM
 # 6) 좌표/주소 후처리 (한 번이면 끝)
 step "backfill-coords" crawler/scripts/ingest.py backfill-coords
 step "backfill-addrs"  crawler/scripts/ingest.py backfill-addrs
+
+# 6b) Kakao 역지오코딩 — 도로명 누락 매물 보강 (KAKAO_REST_API_KEY 필요)
+if [ -n "${KAKAO_REST_API_KEY:-}" ]; then
+  RG_LIMIT="${REVERSE_GEOCODE_LIMIT:-2000}"
+  drain "reverse-geocode" crawler/scripts/ingest.py reverse-geocode \
+    --limit "$RG_LIMIT" --concurrency 8
+else
+  echo "[skip] reverse-geocode — KAKAO_REST_API_KEY not set"
+fi
 
 # 7) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
 # SALES_DAYS 환경변수로 조회 기간 조정 가능 (기본: 7일 = 어제~오늘 새 매각결과)

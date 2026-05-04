@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -518,6 +519,106 @@ async def cmd_backfill_addrs(args: argparse.Namespace) -> None:
     print(f"\n[done] backfill-addrs → {totals} ({elapsed:.1f}s)")
 
 
+# ---------- reverse geocoding (Kakao Local) ----------
+
+async def cmd_reverse_geocode(args: argparse.Namespace) -> None:
+    """좌표는 있는데 road_addr이 비어있는 매물을 Kakao 역지오코딩으로 채움."""
+    import httpx
+
+    api_key = os.environ.get("KAKAO_REST_API_KEY")
+    if not api_key:
+        print("[fatal] KAKAO_REST_API_KEY 환경변수 없음")
+        return
+
+    store = Store()
+    run_id = store.start_run("reverse_geocode",
+                             {"limit": args.limit, "concurrency": args.concurrency})
+    started = time.monotonic()
+
+    # Supabase 기본 max-rows 1000 → range로 페이지 분할
+    PAGE = 1000
+    targets: list[dict] = []
+    offset = 0
+    while len(targets) < args.limit:
+        res = (
+            store.sb.table("properties")
+            .select("id, longitude, latitude")
+            .is_("road_addr", "null")
+            .not_.is_("longitude", "null")
+            .not_.is_("latitude", "null")
+            .range(offset, offset + PAGE - 1)
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            break
+        targets.extend(rows)
+        if len(rows) < PAGE:
+            break
+        offset += PAGE
+    targets = targets[:args.limit]
+    print(f"  targets: {len(targets)} (concurrency={args.concurrency})")
+
+    totals = {"requested": len(targets), "ok": 0, "no_addr": 0, "failed": 0}
+    sem = asyncio.Semaphore(args.concurrency)
+    last_print = time.monotonic()
+
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        headers={"Authorization": f"KakaoAK {api_key}"},
+    ) as cli:
+        async def worker(t: dict) -> None:
+            nonlocal last_print
+            async with sem:
+                lng = t["longitude"]; lat = t["latitude"]
+                try:
+                    r = await cli.get(
+                        "https://dapi.kakao.com/v2/local/geo/coord2address.json",
+                        params={"x": lng, "y": lat, "input_coord": "WGS84"},
+                    )
+                    if r.status_code != 200:
+                        totals["failed"] += 1
+                        return
+                    docs = r.json().get("documents") or []
+                    if not docs:
+                        totals["no_addr"] += 1
+                        return
+                    d = docs[0]
+                    road = d.get("road_address") or {}
+                    addr = d.get("address") or {}
+                    payload: dict = {}
+                    if road.get("address_name"):
+                        payload["road_addr"] = road["address_name"]
+                    if addr.get("address_name"):
+                        payload["lot_addr"] = addr["address_name"]
+                    if not payload:
+                        totals["no_addr"] += 1
+                        return
+                    await asyncio.to_thread(
+                        lambda: store.sb.table("properties")
+                            .update(payload).eq("id", t["id"]).execute()
+                    )
+                    totals["ok"] += 1
+                except Exception:
+                    totals["failed"] += 1
+                # progress
+                now = time.monotonic()
+                if now - last_print >= 5.0:
+                    last_print = now
+                    elapsed = now - started
+                    done = totals["ok"] + totals["no_addr"] + totals["failed"]
+                    rate = done / max(elapsed, 0.001)
+                    eta = (totals["requested"] - done) / max(rate, 0.001)
+                    print(f"    progress: ok={totals['ok']} no_addr={totals['no_addr']} "
+                          f"fail={totals['failed']} rate={rate:.1f}/s eta={eta/60:.1f}min")
+
+        await asyncio.gather(*[worker(t) for t in targets])
+
+    store.finish_run(run_id, totals=totals)
+    elapsed = time.monotonic() - started
+    print(f"\n[done] reverse-geocode → {totals} ({elapsed:.1f}s)")
+
+
 # ---------- sales results (매각결과) ----------
 
 async def cmd_sales_results(args: argparse.Namespace) -> None:
@@ -633,6 +734,12 @@ def main() -> None:
                          help="search_row의 도로명/지번 주소를 properties.road_addr/lot_addr로 채움")
     p_a.add_argument("--limit", type=int, default=10000)
     p_a.set_defaults(func=cmd_backfill_addrs)
+
+    p_g = sub.add_parser("reverse-geocode",
+                         help="좌표만 있고 도로명 없는 매물에 Kakao Local API로 주소 채움")
+    p_g.add_argument("--limit", type=int, default=10000)
+    p_g.add_argument("--concurrency", type=int, default=5)
+    p_g.set_defaults(func=cmd_reverse_geocode)
 
     p_r = sub.add_parser("sales-results",
                          help="매각결과(종결 사건) 적재 — sale_results 테이블")

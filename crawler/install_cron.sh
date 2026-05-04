@@ -25,7 +25,8 @@ MARKER="# courtauction-daily"        # 우리가 추가한 line을 식별
 build_env_prefix() {
   local out=""
   for v in COURT PAGE_SIZE MAX_PAGES DETAIL_LIMIT PHOTO_LIMIT THUMB_LIMIT \
-           MAX_DRAIN_ITERS TIME_BUDGET PHOTOS_PER_PROPERTY SALES_DAYS PYTHON; do
+           MAX_DRAIN_ITERS TIME_BUDGET PHOTOS_PER_PROPERTY SALES_DAYS \
+           REVERSE_GEOCODE_LIMIT PYTHON; do
     if [ -n "${!v:-}" ]; then
       out+="${v}=$(printf '%q' "${!v}") "
     fi
