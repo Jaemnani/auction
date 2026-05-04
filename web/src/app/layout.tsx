@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AreaUnitProvider } from "@/lib/area-unit";
+import { AreaUnitToggle } from "@/components/area-unit-toggle";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,6 +29,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
+        <AreaUnitProvider>
         <header className="border-b sticky top-0 z-30 bg-background/95 backdrop-blur">
           <div className="mx-auto max-w-[1600px] px-4 h-14 flex items-center gap-6">
             <Link href="/" className="font-semibold">법원경매 검색</Link>
@@ -34,6 +37,9 @@ export default function RootLayout({
               <Link href="/" className="hover:text-foreground">목록</Link>
               <Link href="/map" className="hover:text-foreground">지도</Link>
             </nav>
+            <div className="ml-auto">
+              <AreaUnitToggle />
+            </div>
           </div>
         </header>
         <main className="flex-1 mx-auto w-full max-w-[1600px] px-4 py-6">
@@ -42,6 +48,7 @@ export default function RootLayout({
         <footer className="border-t py-3 text-center text-xs text-muted-foreground">
           데이터: courtauction.go.kr · 본 서비스는 무료 · 공식 사이트 정보를 우선하세요
         </footer>
+        </AreaUnitProvider>
       </body>
     </html>
   );

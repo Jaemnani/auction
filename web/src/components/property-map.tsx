@@ -6,6 +6,7 @@ import maplibregl, { LngLatBoundsLike, Map as MlMap, Marker, Popup } from "mapli
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Property } from "@/lib/types";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
+import { convertAreaText, useAreaUnit } from "@/lib/area-unit";
 
 const KOREA_BOUNDS: [[number, number], [number, number]] = [
   [124.5, 33.0],
@@ -25,6 +26,7 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
   const sp = useSearchParams();
+  const { unit } = useAreaUnit();
 
   const [rows, setRows] = useState<Property[]>(initialRows);
   const [loading, setLoading] = useState(false);
@@ -137,12 +139,15 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
     for (const p of points) {
       const lng = p.longitude!;
       const lat = p.latitude!;
-      const addr = p.road_addr || p.lot_addr || p.conv_addr || "-";
+      // road_addr 우선, 없으면 conv_addr/lot_addr는 단위 변환
+      const addrPlain = p.road_addr;
+      const addrFallback = p.lot_addr || p.conv_addr;
+      const addr = addrPlain || (addrFallback ? convertAreaText(addrFallback, unit) : "-");
       const subAddr = p.lot_addr && p.road_addr && p.lot_addr !== p.road_addr
         ? `<div style="color:#71717a;font-size:11px;margin-top:2px">지번: ${escapeHtml(p.lot_addr)}</div>`
         : "";
       const buildingNote = p.building_summary
-        ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(p.building_summary.split("\\n")[0].slice(0, 60))}</div>`
+        ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
         : "";
       const html = `
         <div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">
@@ -169,7 +174,8 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
     }
     // initialRows 변경 시 (필터 변경 등) 마커 영역으로 줌
     // bbox refresh로 들어온 새 rows에는 fit 안 함 (사용자 viewport 유지)
-  }, [pointsKey]);
+    // unit 변경 시에도 popup 재생성 — popup HTML이 unit에 의존
+  }, [pointsKey, unit]);
 
   return (
     <div className="relative">

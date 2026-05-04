@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
+import { AreaText } from "@/components/area-text";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +83,7 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
           ) : (
             <>
               {regionParts && <span className="mr-2 text-muted-foreground">{regionParts}</span>}
-              <span className="text-muted-foreground">{p.conv_addr ?? "-"}</span>
+              <span className="text-muted-foreground"><AreaText>{p.conv_addr ?? "-"}</AreaText></span>
             </>
           )}
         </div>
@@ -130,8 +131,8 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
               ["주소(행정)", regionParts || "-"],
               ["도로명 주소", p.road_addr ?? "-"],
               ["지번 주소", p.lot_addr ?? "-"],
-              ["건물 요약", p.building_summary ?? "-"],
-              ["면적 요약", p.area_summary ?? "-"],
+              ["건물 요약", <AreaText key="b">{p.building_summary ?? "-"}</AreaText>],
+              ["면적 요약", <AreaText key="a">{p.area_summary ?? "-"}</AreaText>],
               ["매각결정기일", fmtDate(p.sale_decision_date)],
               ["감정가", fmtMoney(p.appraisal_amount)],
               ["최저매각가", fmtMoney(p.min_sale_price)],
@@ -189,7 +190,7 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
                   {String(item?.aeeEvlMnpntNm ?? `항목 ${i + 1}`)}
                 </div>
                 <div className="text-muted-foreground whitespace-pre-wrap">
-                  {String(item?.aeeEvlMnpntCn ?? "")}
+                  <AreaText>{String(item?.aeeEvlMnpntCn ?? "")}</AreaText>
                 </div>
               </div>
             ))}
@@ -478,13 +479,13 @@ function Stat({ label, value, sub, highlight }: {
   );
 }
 
-function KvGrid({ items }: { items: [string, string][] }) {
+function KvGrid({ items }: { items: [string, React.ReactNode][] }) {
   return (
     <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
       {items.map(([k, v]) => (
         <div key={k} className="flex gap-3 border-b last:border-0 py-1">
           <dt className="text-muted-foreground w-28 shrink-0">{k}</dt>
-          <dd className="break-words">{v || "-"}</dd>
+          <dd className="break-words">{v ?? "-"}</dd>
         </div>
       ))}
     </dl>

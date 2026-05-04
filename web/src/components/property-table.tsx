@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { fmtDate, fmtDiscount, fmtMoneyShort } from "@/lib/format";
 import { photoThumbUrl } from "@/lib/queries";
 import { dDay, fmtDDay } from "@/lib/analysis";
+import { AreaText } from "@/components/area-text";
 import type { Property } from "@/lib/types";
 
 type Props = { rows: Property[]; usageNames?: Record<string, string> };
@@ -76,12 +77,14 @@ function PropertyRow({ r, usageNames }: { r: Property; usageNames: Record<string
             </div>
 
             <div className="text-sm font-medium truncate">
-              {r.road_addr ?? r.conv_addr ?? "-"}
+              {r.road_addr ? r.road_addr
+                : r.conv_addr ? <AreaText>{r.conv_addr}</AreaText>
+                : "-"}
             </div>
 
             {r.building_summary && (
               <div className="text-xs text-muted-foreground line-clamp-1">
-                {r.building_summary}
+                <AreaText>{r.building_summary}</AreaText>
               </div>
             )}
             {!r.road_addr && r.conv_addr && (

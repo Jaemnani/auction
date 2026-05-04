@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fmtMoney } from "@/lib/format";
+import { formatArea, useAreaUnit } from "@/lib/area-unit";
 
 type Deal = {
   거래금액?: string;
@@ -35,6 +36,7 @@ const TYPE_LABELS: Record<MolitType, string> = {
 };
 
 export function MolitDeals({ lawdCd, type = "apt" }: Props) {
+  const { unit } = useAreaUnit();
   const [active, setActive] = useState<MolitType>(type);
   const [deals, setDeals] = useState<Deal[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -119,7 +121,7 @@ export function MolitDeals({ lawdCd, type = "apt" }: Props) {
                     <td className="py-1">{String(d.아파트 ?? d.단지명 ?? d.법정동 ?? "")}</td>
                     <td className="py-1">{date}</td>
                     <td className="py-1 text-right font-mono">{won ? fmtMoney(won * 10000) : "-"}</td>
-                    <td className="py-1 text-right">{d.전용면적 ? `${d.전용면적}㎡` : "-"}</td>
+                    <td className="py-1 text-right">{formatArea(d.전용면적, unit)}</td>
                     <td className="py-1 text-right">{d.층 ?? "-"}</td>
                   </tr>
                 );
