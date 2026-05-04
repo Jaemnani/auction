@@ -1,26 +1,21 @@
 import { supabase } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
 
-const PROPERTY_SELECT = `
+// 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
+// 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
+const LIST_PROPERTY_SELECT = `
   id, case_id, docid, maemul_ser, mokmul_ser,
   appraisal_amount, min_sale_price, current_sale_price, fail_count,
   sale_date, sale_decision_date, status_cd,
   usage_lcl_cd, usage_mcl_cd, usage_scl_cd,
   sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
   building_summary, area_summary, longitude, latitude, detail_synced_at,
-  rmk:detail_result->dspslGdsDxdyInfo->>dspslGdsRmk,
-  spc_rmk:detail_result->dspslGdsDxdyInfo->>gdsSpcfcRmk,
-  dpos_rate:detail_result->dspslGdsDxdyInfo->>prchDposRate,
-  primary_liens:detail_result->dspslGdsDxdyInfo->>tprtyRnkHypthcStngDts,
-  case_prog:detail_result->csBaseInfo->>csProgStatCd,
-  susp_stat:detail_result->csBaseInfo->>auctnSuspStatCd,
-  susp_rsn:detail_result->csBaseInfo->>csProgSuspRsn,
-  claim_amt:detail_result->csBaseInfo->>clmAmt,
-  spcfc_ecdoc_id:detail_result->dspslGdsDxdyInfo->>dspslGdsSpcfcEcdocId,
   cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                   courts:court_code ( code, name ) ),
   property_photos ( seq, storage_path )
 `;
+
+const PROPERTY_SELECT = LIST_PROPERTY_SELECT;
 
 export type PropertyListResult = {
   rows: Property[];
@@ -39,7 +34,7 @@ export async function fetchProperties(
 
   let q = supabase
     .from("properties")
-    .select(PROPERTY_SELECT, { count: "exact" })
+    .select(LIST_PROPERTY_SELECT, { count: "estimated" })  // exact는 17k+ JSON path와 함께 타임아웃
     .is("deleted_at", null);
 
   // 법원
@@ -82,10 +77,19 @@ export async function fetchProperties(
   // 매각가율 (%) — DB에 별도 컬럼이 없으니 PostgREST 식 비교 어려움
   // → 클라이언트에서 row 받은 후 후처리 필터로 적용 (아래 fetchProperties에서)
 
-  // 키워드 (주소/사건번호) — road_addr / conv_addr / case_no
+  // 키워드 — 사건번호처럼 보이면 case_no로 직접 매칭, 아니면 주소들 OR
+  // (PostgREST OR 안에서는 nested 테이블 ilike 미지원)
   if (filters.q && filters.q.trim()) {
     const kw = filters.q.trim();
-    q = q.or(`road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,cases.case_no.ilike.%${kw}%`);
+    const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
+    if (looksLikeCaseNo) {
+      // foreign table 직접 ilike — PostgREST는 .eq처럼 지원
+      q = q.ilike("cases.case_no", `%${kw}%`);
+    } else {
+      q = q.or(
+        `road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,lot_addr.ilike.%${kw}%`,
+      );
+    }
   }
 
   // 정렬

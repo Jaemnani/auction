@@ -2,9 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { fmtDate, fmtDiscount, fmtMoneyShort } from "@/lib/format";
 import { photoThumbUrl } from "@/lib/queries";
-import {
-  parseRiskFlags, parseDposRate, parseCaseStatus, dDay, fmtDDay,
-} from "@/lib/analysis";
+import { dDay, fmtDDay } from "@/lib/analysis";
 import type { Property } from "@/lib/types";
 
 type Props = { rows: Property[]; usageNames?: Record<string, string> };
@@ -107,27 +105,8 @@ function PropertyRow({ r, usageNames }: { r: Property; usageNames: Record<string
               {discount !== "-" && (
                 <Badge variant="destructive" className="text-[10px]">{discount}</Badge>
               )}
-              {(() => {
-                const dp = parseDposRate(r.dpos_rate);
-                if (!dp || !dp.isSpecial) return null;
-                return <Badge variant="secondary" className="text-[10px] bg-yellow-100 text-yellow-900 border-yellow-300">보증금 {dp.rate}%</Badge>;
-              })()}
-              {(() => {
-                const stat = parseCaseStatus(r.case_prog, r.susp_stat, r.susp_rsn);
-                if (!stat || stat.level === "ok") return null;
-                const cls = stat.level === "danger"
-                  ? "bg-red-100 text-red-900 border-red-300"
-                  : "bg-amber-100 text-amber-900 border-amber-300";
-                return <Badge variant="outline" className={`text-[10px] ${cls}`}>{stat.label}</Badge>;
-              })()}
-              {parseRiskFlags(r.rmk).map((f, i) => {
-                const cls = f.level === "danger"
-                  ? "bg-red-100 text-red-900 border-red-300"
-                  : f.level === "warn"
-                  ? "bg-orange-100 text-orange-900 border-orange-300"
-                  : "bg-blue-50 text-blue-900 border-blue-300";
-                return <Badge key={i} variant="outline" className={`text-[10px] ${cls}`}>{f.label}</Badge>;
-              })}
+              {/* 위험·보증금·진행상태 배지는 detail 페이지에 노출
+                  (목록 query에서 detail_result JSON path 추출은 17k row × jsonb로 타임아웃) */}
             </div>
           </div>
 

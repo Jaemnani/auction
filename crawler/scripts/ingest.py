@@ -177,29 +177,51 @@ async def cmd_masters(args: argparse.Namespace) -> None:
 async def cmd_search(args: argparse.Namespace) -> None:
     store = Store()
     run_id = store.start_run("search", {
-        "kind": args.kind, "court": args.court,
+        "kind": args.kind, "court": args.court, "sd": getattr(args, "sd", None),
+        "split_sd": getattr(args, "split_sd", False),
         "max_pages": args.max_pages, "page_size": args.page_size,
     })
     started = time.monotonic()
-    totals = {"pages": 0, "rows": 0, "upserted": 0}
+    totals = {"pages": 0, "rows": 0, "upserted": 0, "by_sd": {}}
+
+    # split_sd 모드: 17개 시도로 분할 호출 (페이징 안정화 → 누락 방지)
+    if getattr(args, "split_sd", False):
+        sds = [r["code"] for r in (
+            store.sb.table("regions_sd").select("code").execute().data or []
+        )]
+        sd_list = sds
+    elif getattr(args, "sd", None):
+        sd_list = [args.sd]
+    else:
+        sd_list = [None]  # 단일 호출 (전국)
 
     try:
         async with _make_client(save_raw=args.save_raw) as c:
-            async for page in c.search_iter(
-                kind=args.kind,
-                page_size=args.page_size,
-                cort_ofc_cd=args.court,
-                max_pages=args.max_pages,
-            ):
-                rows = page.get("dlt_srchResult") or []
-                page_info = page.get("dma_pageInfo") or {}
-                totals["pages"] += 1
-                totals["rows"] += len(rows)
-                upserted = store.upsert_search_rows(rows)
-                totals["upserted"] += upserted
-                print(f"  page {page_info.get('pageNo')}/"
-                      f"{page_info.get('totalCnt')} → +{len(rows)} rows "
-                      f"(upserted {upserted}; total {totals['upserted']})")
+            for sd in sd_list:
+                sd_total = 0
+                kwargs = {}
+                if sd:
+                    kwargs["filters"] = {"rprsAdongSdCd": sd}
+                async for page in c.search_iter(
+                    kind=args.kind,
+                    page_size=args.page_size,
+                    cort_ofc_cd=args.court,
+                    max_pages=args.max_pages,
+                    **kwargs,
+                ):
+                    rows = page.get("dlt_srchResult") or []
+                    page_info = page.get("dma_pageInfo") or {}
+                    totals["pages"] += 1
+                    totals["rows"] += len(rows)
+                    upserted = store.upsert_search_rows(rows)
+                    totals["upserted"] += upserted
+                    sd_total += upserted
+                    sd_lbl = f"sd={sd} " if sd else ""
+                    print(f"  {sd_lbl}page {page_info.get('pageNo')}/"
+                          f"{page_info.get('totalCnt')} → +{len(rows)} rows "
+                          f"(upserted {upserted}; total {totals['upserted']})")
+                if sd:
+                    totals["by_sd"][sd] = sd_total
 
         store.finish_run(run_id, totals=totals)
     except Exception as e:
@@ -700,6 +722,10 @@ def main() -> None:
     p_s.add_argument("--court", default=None)
     p_s.add_argument("--page-size", type=int, default=50)
     p_s.add_argument("--max-pages", type=int, default=None)
+    p_s.add_argument("--sd", default=None,
+                     help="시도 코드 필터 (rprsAdongSdCd) — 페이징 안정화용")
+    p_s.add_argument("--split-sd", action="store_true",
+                     help="17개 시도로 자동 분할 호출 (누락 방지, 권장)")
     p_s.set_defaults(func=cmd_search)
 
     p_d = sub.add_parser("detail", help="단일 detail 적재")
