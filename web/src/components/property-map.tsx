@@ -71,10 +71,20 @@ export function PropertyMap({ rows }: { rows: Property[] }) {
     for (const p of points) {
       const lng = p.longitude!;
       const lat = p.latitude!;
+      // 주소 우선 노출 — road_addr → lot_addr → conv_addr (마지막이 건물 구조 텍스트)
+      const addr = p.road_addr || p.lot_addr || p.conv_addr || "-";
+      const subAddr = p.lot_addr && p.road_addr && p.lot_addr !== p.road_addr
+        ? `<div style="color:#71717a;font-size:11px;margin-top:2px">지번: ${escapeHtml(p.lot_addr)}</div>`
+        : "";
+      const buildingNote = p.building_summary
+        ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(p.building_summary.split("\\n")[0].slice(0, 60))}</div>`
+        : "";
       const html = `
-        <div style="font-size:12px;line-height:1.5;min-width:200px">
+        <div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">
           <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
-          <div style="font-weight:600;margin-top:2px">${escapeHtml(p.conv_addr ?? "-")}</div>
+          <div style="font-weight:600;margin-top:2px;word-break:keep-all">${escapeHtml(addr)}</div>
+          ${subAddr}
+          ${buildingNote}
           <div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
           <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>
           ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}

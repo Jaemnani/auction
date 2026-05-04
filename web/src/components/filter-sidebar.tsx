@@ -78,7 +78,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
       "q", "court", "sd", "sgg", "usage_lcl", "usage_mcl", "usage_scl",
       "min_appraisal", "max_appraisal", "min_sale", "max_sale",
       "min_fail", "max_fail", "min_rate", "max_rate",
-      "sale_from", "sale_to", "sort",
+      "sale_from", "sale_to", "sort", "addr_state",
     ];
     for (const k of writable) {
       const v = f[k];
@@ -252,6 +252,32 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               />
               <span>미래 기일만</span>
             </label>
+          </div>
+          <div>
+            <Label className="text-xs">주소 상태</Label>
+            <Select
+              value={f.addr_state ?? "all"}
+              onValueChange={(v) => {
+                const s = pickStr(v);
+                set("addr_state", s === "with_road" || s === "no_road" ? s : undefined);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="전체">{
+                  f.addr_state === "with_road" ? "도로명 있음만"
+                  : f.addr_state === "no_road" ? "도로명 미수집만"
+                  : "전체"
+                }</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">전체</SelectItem>
+                <SelectItem value="with_road">도로명 있음만</SelectItem>
+                <SelectItem value="no_road">도로명 미수집만</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="text-[10px] text-muted-foreground mt-1">
+              일부 매물은 좌표만 있고 도로명이 없습니다.
+            </div>
           </div>
         </div>
       )}

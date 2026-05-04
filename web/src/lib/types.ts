@@ -102,6 +102,7 @@ export type PropertyFilters = {
   min_rate?: number; // 매각가율 최소 % (= min_sale_price / appraisal × 100)
   max_rate?: number;
   upcoming_only?: boolean; // 매각기일 미래만
+  addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
   sale_from?: string; // 매각기일 from
   sale_to?: string;
   page?: number;

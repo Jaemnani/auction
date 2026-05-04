@@ -74,6 +74,13 @@ export async function fetchProperties(
     q = q.gte("sale_date", today);
   }
 
+  // 주소(도로명) 보유 여부 필터
+  if (filters.addr_state === "with_road") {
+    q = q.not("road_addr", "is", null);
+  } else if (filters.addr_state === "no_road") {
+    q = q.is("road_addr", null);
+  }
+
   // 매각가율 (%) — DB에 별도 컬럼이 없으니 PostgREST 식 비교 어려움
   // → 클라이언트에서 row 받은 후 후처리 필터로 적용 (아래 fetchProperties에서)
 

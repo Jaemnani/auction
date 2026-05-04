@@ -221,7 +221,8 @@ class Store:
             if not (code and sd_code and name):
                 continue
             out.append({"code": code, "sd_code": sd_code, "name": name, "raw": r})
-        return self._upsert_chunked("regions_sgg", out, on_conflict="code")
+        # 복합키 (sd_code, code) — sgg 3자리는 sd 내에서만 unique
+        return self._upsert_chunked("regions_sgg", out, on_conflict="sd_code,code")
 
     def upsert_regions_emd(self, rows: list[dict]) -> int:
         out = []

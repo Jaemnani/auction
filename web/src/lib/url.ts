@@ -22,7 +22,7 @@ export function parseFiltersFromSearchParams(
     if (v && !isNaN(Number(v))) (out as Record<string, unknown>)[k] = Number(v);
   };
   ["q", "court", "sd", "sgg", "usage_lcl", "usage_mcl", "usage_scl",
-    "sale_from", "sale_to", "sort"].forEach((k) =>
+    "sale_from", "sale_to", "sort", "addr_state"].forEach((k) =>
       str(k as keyof PropertyFilters));
   NUM_KEYS.forEach((k) => num(k));
   // 불리언
