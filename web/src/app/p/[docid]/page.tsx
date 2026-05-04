@@ -179,21 +179,25 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </Card>
       )}
 
-      {/* 감정평가 요항 */}
+      {/* 감정평가 요항 — 실제 키: aeeWevlMnpntCtt(내용) + aeeWevlMnpntItmCd(항목코드) */}
       {aeeWevl.length > 0 && (
         <Card>
           <CardHeader><CardTitle className="text-base">감정평가 요항</CardTitle></CardHeader>
           <CardContent className="text-sm space-y-2">
-            {aeeWevl.map((item, i) => (
-              <div key={i} className="border-b pb-2 last:border-0">
-                <div className="font-medium">
-                  {String(item?.aeeEvlMnpntNm ?? `항목 ${i + 1}`)}
+            {aeeWevl.map((item, i) => {
+              const itmCd = String(item?.aeeWevlMnpntItmCd ?? "");
+              const ctt = String(item?.aeeWevlMnpntCtt ?? "").trim();
+              const label = AEE_LABELS[itmCd] ?? `항목 ${itmCd || i + 1}`;
+              if (!ctt || ctt === "-." || ctt === "-") return null;
+              return (
+                <div key={i} className="border-b pb-2 last:border-0">
+                  <div className="font-medium">{label}</div>
+                  <div className="text-muted-foreground whitespace-pre-wrap">
+                    <AreaText>{ctt}</AreaText>
+                  </div>
                 </div>
-                <div className="text-muted-foreground whitespace-pre-wrap">
-                  <AreaText>{String(item?.aeeEvlMnpntCn ?? "")}</AreaText>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}
@@ -260,6 +264,37 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
     </div>
   );
 }
+
+// 감정평가 요항 항목코드 → 한글 라벨 (한국감정원 표준 16개 항목)
+const AEE_LABELS: Record<string, string> = {
+  "00083001": "위치 / 인근 환경",
+  "00083002": "교통",
+  "00083003": "교통",
+  "00083004": "주위 환경",
+  "00083005": "도로 인접",
+  "00083006": "이용 상태",
+  "00083007": "공법상 규제",
+  "00083008": "이용 상태",
+  "00083009": "토지 형상·지세",
+  "00083010": "토지 명세",
+  "00083011": "도시계획 / 용도지역",
+  "00083012": "토지 이용 계획",
+  "00083013": "건물 명세",
+  "00083014": "건물 명세",
+  "00083015": "건물 구조",
+  "00083016": "건물 설비",
+  "00083017": "부대 설비",
+  "00083018": "위반 건축물",
+  "00083019": "기타",
+  "00083020": "임대 관계",
+  "00083021": "임대 관계",
+  "00083022": "임대 관계",
+  "00083023": "기타 참고사항",
+  "00083024": "기타 참고사항",
+  "00083025": "임대 관계",
+  "00083026": "임대 관계",
+  "00083027": "감정평가 의견",
+};
 
 // 용도 코드 → MOLIT 실거래가 API 유형 매핑
 // courtauction lclsUtilCd (대분류): 10000=토지, 20000=건물, 30000=차량, 40000=기타

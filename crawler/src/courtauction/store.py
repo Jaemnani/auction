@@ -627,9 +627,10 @@ class Store:
                     "sale_date": _to_date(r.get("dxdyYmd") or r.get("saleYmd")
                                           or r.get("dspslYmd")),
                     "hour": _str(r.get("dxdyHm") or r.get("saleHm")),
-                    "place": _str(r.get("dspslPlc") or r.get("plc")),
-                    "min_price": _to_int(r.get("lwsDspslPrc") or r.get("minPrc")),
-                    "result_cd": _str(r.get("dspslRsltCd") or r.get("rsltCd")),
+                    # 실제 응답 키: dxdyPlcNm / tsLwsDspslPrc / auctnDxdyRsltCd / dspslAmt
+                    "place": _str(r.get("dxdyPlcNm") or r.get("dspslPlc")),
+                    "min_price": _to_int(r.get("tsLwsDspslPrc") or r.get("lwsDspslPrc")),
+                    "result_cd": _str(r.get("auctnDxdyRsltCd") or r.get("dspslRsltCd")),
                     "raw": r,
                 })
             self.sb.table("property_sale_dates").upsert(

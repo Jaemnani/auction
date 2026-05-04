@@ -32,6 +32,13 @@ export default function RootLayout({
       lang="ko"
       className={`${barlow.variable} ${monoFont.variable} h-full antialiased`}
     >
+      <head>
+        {/* Pretendard Variable — 한글 본문 (aib.vote와 동일) */}
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+      </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AreaUnitProvider>
         <header className="border-b sticky top-0 z-30 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">

@@ -130,6 +130,7 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
   // 1) 가벼운 컬럼 + 관계 (큰 jsonb는 제외).
   //    PROPERTY_SELECT에 이미 property_photos(seq, storage_path)가 들어 있으니
   //    상세에 필요한 추가 필드만 따로 명시.
+  // 단건 fetch라 JSON path 비용 무시 가능 — 권리분석 카드용 키 모두 발췌
   const DETAIL_SELECT = `
     id, case_id, docid, maemul_ser, mokmul_ser,
     appraisal_amount, min_sale_price, current_sale_price, fail_count,
@@ -137,9 +138,18 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
     usage_lcl_cd, usage_mcl_cd, usage_scl_cd,
     sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
     building_summary, area_summary, longitude, latitude, detail_synced_at,
+    rmk:detail_result->dspslGdsDxdyInfo->>dspslGdsRmk,
+    spc_rmk:detail_result->dspslGdsDxdyInfo->>gdsSpcfcRmk,
+    dpos_rate:detail_result->dspslGdsDxdyInfo->>prchDposRate,
+    primary_liens:detail_result->dspslGdsDxdyInfo->>tprtyRnkHypthcStngDts,
+    case_prog:detail_result->csBaseInfo->>csProgStatCd,
+    susp_stat:detail_result->csBaseInfo->>auctnSuspStatCd,
+    susp_rsn:detail_result->csBaseInfo->>csProgSuspRsn,
+    claim_amt:detail_result->csBaseInfo->>clmAmt,
+    spcfc_ecdoc_id:detail_result->dspslGdsDxdyInfo->>dspslGdsSpcfcEcdocId,
     cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                     courts:court_code ( code, name ) ),
-    property_sale_dates ( seq, sale_date, hour, place, min_price, result_cd ),
+    property_sale_dates ( seq, sale_date, hour, place, min_price, result_cd, raw ),
     property_photos ( seq, photo_kind_cd, photo_kind_name, description, storage_path )
   `;
   const { data: base, error } = await supabase
