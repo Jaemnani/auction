@@ -390,6 +390,75 @@ class CourtAuctionClient:
         )
         return body["data"]
 
+    # 매각결과검색 (PGJ158M02) — 종결된 사건들의 결과 (낙찰가/유찰 등)
+    async def search_results(
+        self,
+        *,
+        page_no: int = 1,
+        page_size: int = 50,
+        sd_code: str | None = None,
+        sgg_code: str | None = None,
+        usage_lcl: str | None = None,
+        bid_from: str | None = None,  # YYYYMMDD
+        bid_to: str | None = None,
+        filters: dict[str, str] | None = None,
+    ) -> dict:
+        """매각결과 검색. search와 같은 row 구조 + maeAmt/inqCnt 등 결과 필드 포함."""
+        if page_size > self.SEARCH_PAGE_SIZE_MAX:
+            raise ValueError(f"page_size {page_size} > {self.SEARCH_PAGE_SIZE_MAX}")
+        info = self._empty_search_info()
+        info.update({
+            "mvprpRletDvsCd": "00031R",
+            "cortAuctnSrchCondCd": "0004601",
+            "pgmId": "PGJ158M02",
+        })
+        if sd_code:    info["rprsAdongSdCd"] = sd_code
+        if sgg_code:   info["rprsAdongSggCd"] = sgg_code
+        if usage_lcl:  info["lclDspslGdsLstUsgCd"] = usage_lcl
+        if bid_from:   info["bidBgngYmd"] = bid_from
+        if bid_to:     info["bidEndYmd"] = bid_to
+        if filters:
+            for k, v in filters.items():
+                if k not in self.SEARCH_KEYS:
+                    raise ValueError(f"unknown filter: {k}")
+                info[k] = v
+        payload = {
+            "dma_pageInfo": {
+                "pageNo": str(page_no), "pageSize": str(page_size),
+                "bfPageNo": "", "startRowNo": str((page_no - 1) * page_size + 1),
+                "totalCnt": "0",
+                "totalYn": "Y" if page_no == 1 else "N",
+                "groupTotalCount": "",
+            },
+            "dma_srchGdsDtlSrchInfo": info,
+        }
+        body = await self.post(
+            "/pgj/pgjsearch/selectDspslSchdRsltSrch.on",
+            payload, expect_keys=["dlt_srchResult", "dma_pageInfo"],
+        )
+        return body["data"]
+
+    async def search_results_iter(
+        self, *, page_size: int = 50, max_pages: int | None = None, **kwargs,
+    ):
+        """모든 페이지 순회."""
+        page_no = 1
+        cached_total: int | None = None
+        while True:
+            page = await self.search_results(
+                page_no=page_no, page_size=page_size, **kwargs,
+            )
+            yield page
+            page_info = page.get("dma_pageInfo") or {}
+            try: t = int(page_info.get("totalCnt") or 0)
+            except (TypeError, ValueError): t = 0
+            if cached_total is None: cached_total = t
+            if cached_total <= 0: return
+            seen = page_no * page_size
+            if seen >= cached_total: return
+            page_no += 1
+            if max_pages and page_no > max_pages: return
+
     async def search_iter(
         self,
         *,

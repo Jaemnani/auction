@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { fetchAuctionStats, fetchCodeNames, fetchProperty, photoPublicUrl } from "@/lib/queries";
+import { fetchCodeNames, fetchProperty, fetchRegionStats, photoPublicUrl } from "@/lib/queries";
 import { MolitDeals } from "@/components/molit-deals";
 import { fmtDate, fmtMoney, fmtDiscount, fmtPercent } from "@/lib/format";
 import {
@@ -235,13 +235,15 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </Card>
       )}
 
-      {/* 인근 낙찰 통계 (courtauction) */}
-      {p.cases?.court_code && p.cases?.case_no && (
-        <NearbyAuctionStats
-          courtCode={p.cases.court_code}
-          caseNo={p.cases.case_no}
-        />
-      )}
+      {/* 인근 낙찰 통계 — 우리 sale_results 집계 */}
+      <NearbyAuctionStats
+        sdCode={p.sd_code}
+        sggCode={p.sgg_code}
+        usageLcl={p.usage_lcl_cd}
+        regionLabel={regionParts}
+        usageLabel={usageLabel}
+        currentRate={pricePct}
+      />
 
       {/* 위치 — 한국 영토 내 좌표일 때만 */}
       {p.longitude != null && p.latitude != null
@@ -291,32 +293,53 @@ function inferMolitType(
   return "apt"; // 기본 (도시 매물 다수)
 }
 
-// 인근 낙찰 통계 — courtauction selectAuctnTongSrchRslt
-async function NearbyAuctionStats({ courtCode, caseNo }: { courtCode: string; caseNo: string }) {
-  const stats = await fetchAuctionStats(courtCode, caseNo);
-  if (!stats) return null;
-  const summary = (stats.dma_result ?? stats) as Record<string, unknown>;
-  const items = Object.entries(summary).filter(
-    ([, v]) => v !== null && v !== "" && (typeof v !== "object" || (Array.isArray(v) && v.length > 0)),
-  );
-  if (items.length === 0) return null;
+// 인근 낙찰 통계 — 우리 DB의 sale_results 집계 view에서 가져옴
+async function NearbyAuctionStats({
+  sdCode, sggCode, usageLcl, regionLabel, usageLabel, currentRate,
+}: {
+  sdCode: string | null;
+  sggCode: string | null;
+  usageLcl: string | null;
+  regionLabel: string;
+  usageLabel: string;
+  currentRate: number | null;
+}) {
+  const s = await fetchRegionStats(sdCode, sggCode, usageLcl);
+  if (!s) return null;
+
+  // 현재 매물의 최저가율 vs 평균 매각가율 비교
+  const avg = s.avg_sale_rate_pct;
+  const compareNote = avg != null && currentRate != null
+    ? currentRate < avg
+      ? `현재 최저가는 평균 매각가율보다 ${(avg - currentRate).toFixed(0)}%p 낮음 — 잠재 할인`
+      : currentRate > avg
+        ? `현재 최저가는 평균 매각가율보다 ${(currentRate - avg).toFixed(0)}%p 높음 — 가격 매력 약함`
+        : "평균 수준"
+    : null;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">인근 낙찰 통계</CardTitle>
       </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono">
-          {items.slice(0, 30).map(([k, v]) => (
-            <div key={k} className="flex gap-2">
-              <dt className="text-muted-foreground w-32 shrink-0">{k}</dt>
-              <dd className="break-words">
-                {Array.isArray(v) ? `${v.length}건` : String(v)}
-              </dd>
-            </div>
-          ))}
-        </dl>
+      <CardContent className="space-y-3">
+        <div className="text-xs text-muted-foreground">
+          {regionLabel} · {usageLabel} · 표본 {s.total_count}건 (90일 내 매각 {s.recent_sold_count}건)
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="평균 매각가율" value={s.avg_sale_rate_pct != null ? `${s.avg_sale_rate_pct}%` : "-"}
+                sub={compareNote ?? undefined} highlight />
+          <Stat label="매각 / 전체" value={`${s.sold_count} / ${s.total_count}`}
+                sub={s.total_count > 0 ? `${Math.round((s.sold_count / s.total_count) * 100)}%` : undefined} />
+          <Stat label="평균 응찰자수" value={s.avg_bidder_count != null ? `${s.avg_bidder_count}명` : "-"} />
+          <Stat label="평균 유찰" value={s.avg_fail_count_when_sold != null ? `${s.avg_fail_count_when_sold}회` : "-"}
+                sub="매각된 건 기준" />
+        </div>
+        {s.recent_sold_count < 5 && (
+          <div className="text-xs text-amber-700">
+            ⚠ 최근 90일 매각 표본이 {s.recent_sold_count}건으로 적습니다. 통계 신뢰도가 낮을 수 있습니다.
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -345,6 +345,59 @@ class Store:
         )
         return {"case_id": case_id, "property_id": prop.data["id"]}
 
+    def upsert_sale_results(self, rows: list[dict]) -> int:
+        """매각결과검색 row → sale_results 테이블에 일괄 upsert.
+
+        search row와 같은 키 구조 + maeAmt(실제 낙찰가) + inqCnt(응찰자 수).
+        """
+        if not rows:
+            return 0
+        out: list[dict] = []
+        for r in rows:
+            docid = _str(r.get("docid"))
+            if not docid:
+                continue
+            payload = {
+                "docid": docid,
+                "court_code": _str(r.get("boCd") or r.get("cortOfcCd")),
+                "case_no": _str(r.get("srnSaNo")),
+                "maemul_ser": _to_int(r.get("maemulSer")) or 1,
+                "appraisal_amount": _to_int(r.get("gamevalAmt")),
+                "min_sale_price": _to_int(r.get("minmaePrice")),
+                "sale_amount": _to_int(r.get("maeAmt")),
+                "fail_count": _to_int(r.get("yuchalCnt")),
+                "bidder_count": _to_int(r.get("inqCnt")),
+                "sale_date": _to_date(r.get("maeGiil")),
+                "result_status_cd": _str(r.get("mulStatcd")),
+                "in_progress_yn": _str(r.get("mulJinYn")),
+                "usage_lcl_cd": _str(r.get("lclsUtilCd")),
+                "usage_mcl_cd": _str(r.get("mclsUtilCd")),
+                "usage_scl_cd": _str(r.get("sclsUtilCd")),
+                "sd_code": _str(r.get("daepyoSidoCd")),
+                "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
+                "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
+                "conv_addr": _str(r.get("convAddr") or r.get("daepyoAddr")),
+                "road_addr": _clean_addr(r.get("bgPlaceRdAllAddr") or r.get("rdAllAddr")),
+                "building_summary": _str(r.get("buldList")),
+                **(_lnglat_payload(r)),
+                "raw": r,
+                "fetched_at": datetime.utcnow().isoformat(),
+            }
+            payload = {k: v for k, v in payload.items() if v is not None}
+            out.append(payload)
+        # docid dedupe (last-wins) within same batch
+        seen: dict[str, dict] = {}
+        for p in out:
+            seen[p["docid"]] = p
+        deduped = list(seen.values())
+        if not deduped:
+            return 0
+        for chunk in _chunked(deduped, 50):
+            self.sb.table("sale_results").upsert(
+                chunk, on_conflict="docid", returning="minimal",
+            ).execute()
+        return len(deduped)
+
     def upsert_search_rows(self, rows: list[dict]) -> int:
         """진짜 배치 — 페이지(50개) 전체를 2~3 round-trip으로 처리.
 

@@ -518,6 +518,64 @@ async def cmd_backfill_addrs(args: argparse.Namespace) -> None:
     print(f"\n[done] backfill-addrs → {totals} ({elapsed:.1f}s)")
 
 
+# ---------- sales results (매각결과) ----------
+
+async def cmd_sales_results(args: argparse.Namespace) -> None:
+    """매각결과검색으로 종결 매물 일괄 적재 → sale_results 테이블.
+
+    기본 기간: 90일 전 ~ 오늘. 17개 시도 × 4 용도 매트릭스로 페이징 (전국).
+    """
+    from datetime import date, timedelta
+
+    bid_to = args.bid_to or date.today().strftime("%Y%m%d")
+    bid_from = args.bid_from or (date.today() - timedelta(days=90)).strftime("%Y%m%d")
+
+    store = Store()
+    run_id = store.start_run("sales_results",
+                             {"bid_from": bid_from, "bid_to": bid_to})
+    started = time.monotonic()
+
+    # 시도 코드 (17개) — 전국 페이징
+    sd_codes = [r["code"] for r in (
+        store.sb.table("regions_sd").select("code").execute().data or []
+    )]
+    if not sd_codes:
+        print("[warn] regions_sd 비어있음 — masters 먼저 실행하세요")
+        store.finish_run(run_id, status="failed", error="regions_sd empty")
+        return
+
+    print(f"  bid range: {bid_from} ~ {bid_to}, sd × {len(sd_codes)}")
+    totals = {"pages": 0, "rows": 0, "upserted": 0, "by_sd": {}}
+
+    try:
+        async with _make_client(save_raw=args.save_raw) as c:
+            for sd in sd_codes:
+                sd_total = 0
+                async for page in c.search_results_iter(
+                    page_size=50,
+                    sd_code=sd,
+                    bid_from=bid_from, bid_to=bid_to,
+                    max_pages=args.max_pages,
+                ):
+                    rows = page.get("dlt_srchResult") or []
+                    page_info = page.get("dma_pageInfo") or {}
+                    totals["pages"] += 1
+                    totals["rows"] += len(rows)
+                    n = store.upsert_sale_results(rows)
+                    totals["upserted"] += n
+                    sd_total += n
+                    print(f"  sd={sd} page {page_info.get('pageNo')}/"
+                          f"{page_info.get('totalCnt')} → +{len(rows)} (up {n})")
+                totals["by_sd"][sd] = sd_total
+        store.finish_run(run_id, totals=totals)
+    except Exception as e:
+        store.finish_run(run_id, totals=totals, status="failed", error=str(e))
+        raise
+
+    elapsed = time.monotonic() - started
+    print(f"\n[done] sales-results → {totals} ({elapsed:.1f}s)")
+
+
 # ---------- main ----------
 
 def main() -> None:
@@ -575,6 +633,15 @@ def main() -> None:
                          help="search_row의 도로명/지번 주소를 properties.road_addr/lot_addr로 채움")
     p_a.add_argument("--limit", type=int, default=10000)
     p_a.set_defaults(func=cmd_backfill_addrs)
+
+    p_r = sub.add_parser("sales-results",
+                         help="매각결과(종결 사건) 적재 — sale_results 테이블")
+    p_r.add_argument("--bid-from", default=None,
+                     help="YYYYMMDD (기본: 90일 전)")
+    p_r.add_argument("--bid-to", default=None,
+                     help="YYYYMMDD (기본: 오늘)")
+    p_r.add_argument("--max-pages", type=int, default=None)
+    p_r.set_defaults(func=cmd_sales_results)
 
     args = ap.parse_args()
     asyncio.run(args.func(args))

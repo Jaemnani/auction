@@ -16,6 +16,7 @@
 #   MAX_DRAIN_ITERS=20    drain 루프 최대 반복
 #   TIME_BUDGET=7200      전체 예산 (초). 초과 시 남은 step 건너뜀
 #   PHOTOS_PER_PROPERTY=1 매물당 사진 N장만 저장 (무료 5GB 안전), ""=전체
+#   SALES_DAYS=7          매각결과 조회 기간 (오늘 기준 N일 전까지)
 #   PYTHON=/path/...      (기본: 공용 venv)
 #
 # 모든 stdout/stderr → crawler/data/logs/daily_<timestamp>.log
@@ -128,6 +129,14 @@ drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUM
 # 6) 좌표/주소 후처리 (한 번이면 끝)
 step "backfill-coords" crawler/scripts/ingest.py backfill-coords
 step "backfill-addrs"  crawler/scripts/ingest.py backfill-addrs
+
+# 7) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
+# SALES_DAYS 환경변수로 조회 기간 조정 가능 (기본: 7일 = 어제~오늘 새 매각결과)
+SALES_DAYS="${SALES_DAYS:-7}"
+SALES_FROM="$(/bin/date -v-${SALES_DAYS}d +%Y%m%d 2>/dev/null || /bin/date -d "${SALES_DAYS} days ago" +%Y%m%d)"
+SALES_TO="$(/bin/date +%Y%m%d)"
+step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
+  --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
 # --- 30일 이상 로그 정리 ---
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true

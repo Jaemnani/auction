@@ -194,7 +194,47 @@ export async function fetchCodeNames(codes: string[]) {
   return out;
 }
 
-// 인근 낙찰 통계 — courtauction의 selectAuctnTongSrchRslt API 호출 (server-side)
+// 인근 낙찰 통계 — 우리 sale_results 테이블 + auction_stats_by_region view
+export type AuctionStat = {
+  sd_code: string;
+  sgg_code: string;
+  usage_lcl_cd: string;
+  total_count: number;
+  sold_count: number;
+  unsold_count: number;
+  avg_sale_rate_pct: number | null;     // 평균 매각가율 (%)
+  avg_fail_count_when_sold: number | null;
+  avg_bidder_count: number | null;
+  latest_sale_date: string | null;
+  recent_sold_count: number;            // 90일 내 매각 건수 (신선도)
+};
+
+export async function fetchRegionStats(
+  sd_code: string | null | undefined,
+  sgg_code: string | null | undefined,
+  usage_lcl_cd: string | null | undefined,
+): Promise<AuctionStat | null> {
+  if (!sd_code || !sgg_code) return null;
+  let q = supabase.from("auction_stats_by_region")
+    .select("*")
+    .eq("sd_code", sd_code)
+    .eq("sgg_code", sgg_code);
+  if (usage_lcl_cd) q = q.eq("usage_lcl_cd", usage_lcl_cd);
+  const { data, error } = await q.maybeSingle();
+  if (error) {
+    // 용도 정확히 매칭 안 되면 sd+sgg 전체로 폴백
+    const fb = await supabase.from("auction_stats_by_region")
+      .select("*")
+      .eq("sd_code", sd_code)
+      .eq("sgg_code", sgg_code)
+      .order("total_count", { ascending: false })
+      .limit(1);
+    return (fb.data?.[0] as AuctionStat) ?? null;
+  }
+  return (data as AuctionStat) ?? null;
+}
+
+// (이전) courtauction의 selectAuctnTongSrchRslt 라이브 호출 — 발굴 미완으로 비활성
 // detail 페이지에서 lazy-load 되는 보조 정보
 export async function fetchAuctionStats(
   courtCode: string, caseNo: string,
