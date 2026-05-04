@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Pretendard Variable — 한글 본문 (aib.vote와 동일한 한글 웹폰트) */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -49,38 +52,39 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* aib.vote 컬러 톤 — warm off-white + 블루 primary + 노랑 accent */
+  --background: #fafaf6;        /* warm cream off-white */
+  --foreground: #18181b;        /* zinc-900 텍스트 */
+  --card: #ffffff;              /* 카드 — 흰색 */
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #0067b7;           /* aib brand blue */
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f0;         /* warm muted */
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f0;
+  --muted-foreground: #71717a;  /* zinc-500 */
+  --accent: #ffe066;            /* aib accent yellow */
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;       /* red-600 */
+  --border: #e7e5db;            /* warm border */
+  --input: #e7e5db;
+  --ring: #0067b7;
+  --chart-1: #0067b7;
+  --chart-2: #ffe066;
+  --chart-3: #1447e6;
+  --chart-4: #f99c00;
+  --chart-5: #71717a;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #ffffff;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #0067b7;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f0;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e7e5db;
+  --sidebar-ring: #0067b7;
 }
 
 .dark {
@@ -123,8 +127,19 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* aib.vote와 동일한 폰트 스택: Barlow(라틴/숫자) + Pretendard(한글) */
+    font-family: var(--font-barlow), "Pretendard Variable", Pretendard,
+      ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo",
+      "Noto Sans KR", "Malgun Gothic", sans-serif;
+    font-feature-settings: "tnum", "ss03";
   }
   html {
-    @apply font-sans;
+    font-family: var(--font-barlow), "Pretendard Variable", Pretendard,
+      ui-sans-serif, system-ui, sans-serif;
+  }
+  /* heading은 약간 더 묵직하게 */
+  h1, h2, h3, .heading {
+    letter-spacing: -0.01em;
+    font-weight: 600;
   }
 }

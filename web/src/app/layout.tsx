@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Barlow, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AreaUnitProvider } from "@/lib/area-unit";
 import { AreaUnitToggle } from "@/components/area-unit-toggle";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// aib.vote와 동일한 영문/숫자 폰트 (한글은 Pretendard Variable, globals.css에서 import)
+const barlow = Barlow({
+  variable: "--font-barlow",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const monoFont = JetBrains_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -26,16 +30,19 @@ export default function RootLayout({
   return (
     <html
       lang="ko"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${barlow.variable} ${monoFont.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AreaUnitProvider>
-        <header className="border-b sticky top-0 z-30 bg-background/95 backdrop-blur">
+        <header className="border-b sticky top-0 z-30 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
           <div className="mx-auto max-w-[1600px] px-4 h-14 flex items-center gap-6">
-            <Link href="/" className="font-semibold">법원경매 검색</Link>
-            <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-              <Link href="/" className="hover:text-foreground">목록</Link>
-              <Link href="/map" className="hover:text-foreground">지도</Link>
+            <Link href="/" className="flex items-baseline gap-2">
+              <span className="text-lg font-bold tracking-tight">법원경매</span>
+              <span className="text-xs text-muted-foreground hidden sm:inline">무료 검색</span>
+            </Link>
+            <nav className="flex items-center gap-1 text-sm">
+              <Link href="/" className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition">목록</Link>
+              <Link href="/map" className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition">지도</Link>
             </nav>
             <div className="ml-auto">
               <AreaUnitToggle />
