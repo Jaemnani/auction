@@ -77,7 +77,8 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     const writable: (keyof PropertyFilters)[] = [
       "q", "court", "sd", "sgg", "usage_lcl", "usage_mcl", "usage_scl",
       "min_appraisal", "max_appraisal", "min_sale", "max_sale",
-      "min_fail", "max_fail", "sale_from", "sale_to", "sort",
+      "min_fail", "max_fail", "min_rate", "max_rate",
+      "sale_from", "sale_to", "sort",
     ];
     for (const k of writable) {
       const v = f[k];
@@ -87,6 +88,8 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         params.set(k as string, String(v));
       }
     }
+    if (f.upcoming_only) params.set("upcoming_only", "1");
+    else params.delete("upcoming_only");
     params.delete("page");
     startTransition(() => router.push(`${pathname}?${params.toString()}`));
   }
@@ -230,6 +233,9 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
           <RangeField label="유찰횟수"
             min={f.min_fail} max={f.max_fail}
             onMin={(v) => set("min_fail", v)} onMax={(v) => set("max_fail", v)} />
+          <RangeField label="매각가율 (%)"
+            min={f.min_rate} max={f.max_rate}
+            onMin={(v) => set("min_rate", v)} onMax={(v) => set("max_rate", v)} />
           <div>
             <Label className="text-xs">매각기일</Label>
             <div className="flex gap-1">
@@ -238,6 +244,14 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               <Input type="date" value={f.sale_to ?? ""}
                      onChange={(e) => set("sale_to", e.target.value || undefined)} />
             </div>
+            <label className="text-xs flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!f.upcoming_only}
+                onChange={(e) => set("upcoming_only", e.target.checked || undefined)}
+              />
+              <span>미래 기일만</span>
+            </label>
           </div>
         </div>
       )}

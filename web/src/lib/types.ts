@@ -42,6 +42,16 @@ export type Property = {
   longitude: number | null;
   latitude: number | null;
   detail_synced_at: string | null;
+  // PostgREST JSON path로 detail_result에서 발췌 (목록에서도 배지 표시용)
+  rmk?: string | null;
+  spc_rmk?: string | null;
+  dpos_rate?: string | number | null;
+  primary_liens?: string | null;
+  case_prog?: string | null;
+  susp_stat?: string | null;
+  susp_rsn?: string | null;
+  claim_amt?: string | number | null;
+  spcfc_ecdoc_id?: string | null;
   property_photos?: Array<{ seq: number; storage_path: string | null }> | null;
   cases: {
     id: string;
@@ -89,6 +99,9 @@ export type PropertyFilters = {
   max_sale?: number;
   min_fail?: number; // 유찰횟수 최소
   max_fail?: number;
+  min_rate?: number; // 매각가율 최소 % (= min_sale_price / appraisal × 100)
+  max_rate?: number;
+  upcoming_only?: boolean; // 매각기일 미래만
   sale_from?: string; // 매각기일 from
   sale_to?: string;
   page?: number;

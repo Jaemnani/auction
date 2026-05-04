@@ -2,7 +2,7 @@ import type { PropertyFilters } from "./types";
 
 const NUM_KEYS = [
   "min_appraisal", "max_appraisal", "min_sale", "max_sale",
-  "min_fail", "max_fail", "page", "page_size",
+  "min_fail", "max_fail", "min_rate", "max_rate", "page", "page_size",
 ] as const;
 
 export function parseFiltersFromSearchParams(
@@ -25,6 +25,10 @@ export function parseFiltersFromSearchParams(
     "sale_from", "sale_to", "sort"].forEach((k) =>
       str(k as keyof PropertyFilters));
   NUM_KEYS.forEach((k) => num(k));
+  // 불리언
+  if (get("upcoming_only") === "1" || get("upcoming_only") === "true") {
+    out.upcoming_only = true;
+  }
   return out;
 }
 

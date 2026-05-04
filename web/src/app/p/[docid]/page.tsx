@@ -1,6 +1,11 @@
 import { notFound } from "next/navigation";
-import { fetchCodeNames, fetchProperty, photoPublicUrl } from "@/lib/queries";
+import { fetchAuctionStats, fetchCodeNames, fetchProperty, photoPublicUrl } from "@/lib/queries";
+import { MolitDeals } from "@/components/molit-deals";
 import { fmtDate, fmtMoney, fmtDiscount, fmtPercent } from "@/lib/format";
+import {
+  parseRiskFlags, parseDposRate, parsePrimaryLien,
+  parseCaseStatus, dDay, fmtDDay, courtauctionLink,
+} from "@/lib/analysis";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -85,6 +90,9 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
           <div className="text-xs text-muted-foreground mt-0.5">지번 {p.lot_addr}</div>
         )}
       </div>
+
+      {/* 권리분석 요약 카드 — 입찰 전 필독 */}
+      <PropertyRiskCard p={p} />
 
       {/* 사진 그리드 */}
       {photos.length > 0 && <PropertyPhotos photos={photos} />}
@@ -212,6 +220,29 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </details>
       )}
 
+      {/* 인근 실거래가 (국토부 OpenAPI) */}
+      {p.sd_code && p.sgg_code && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">인근 실거래가 (국토부)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MolitDeals
+              lawdCd={`${p.sd_code}${p.sgg_code}`}
+              type={inferMolitType(p.usage_lcl_cd, p.usage_mcl_cd, p.rmk)}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 인근 낙찰 통계 (courtauction) */}
+      {p.cases?.court_code && p.cases?.case_no && (
+        <NearbyAuctionStats
+          courtCode={p.cases.court_code}
+          caseNo={p.cases.case_no}
+        />
+      )}
+
       {/* 위치 — 한국 영토 내 좌표일 때만 */}
       {p.longitude != null && p.latitude != null
         && p.longitude >= 124 && p.longitude <= 132.5
@@ -224,6 +255,189 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </Card>
       )}
     </div>
+  );
+}
+
+// 용도 코드 → MOLIT 실거래가 API 유형 매핑
+// courtauction lclsUtilCd (대분류): 10000=토지, 20000=건물, 30000=차량, 40000=기타
+// 정확한 mclsUtilCd 매핑은 미해석 → 표준 prefix + dspslGdsRmk 키워드 보조 휴리스틱
+import type { MolitType } from "@/components/molit-deals";
+function inferMolitType(
+  lcl: string | null | undefined,
+  mcl: string | null | undefined,
+  rmk?: string | null,
+): MolitType {
+  if (lcl === "10000") return "land";              // 토지
+  if (lcl === "30000" || lcl === "40000") return "land";  // 매핑 불가 → 토지로 대체
+
+  // 20000 = 건물군 — 중분류 + 비고 텍스트 휴리스틱
+  const text = (rmk ?? "") + (mcl ?? "");
+  if (/공장|창고|물류센터|제조시설/.test(text)) return "indu";
+  if (/근린생활시설|상가|사무실|업무시설|상업|점포/.test(text)) return "nrg";
+  if (/오피스텔/.test(text)) return "offi";
+  if (/단독주택|다가구/.test(text)) return "sh";
+  if (/연립주택|다세대|빌라/.test(text)) return "rh";
+  if (/아파트/.test(text)) return "apt";
+
+  // mcl prefix fallback (정확도 낮음)
+  if (mcl) {
+    if (mcl.startsWith("201")) return "apt";
+    if (mcl.startsWith("202")) return "rh";
+    if (mcl.startsWith("203")) return "sh";
+    if (mcl.startsWith("204")) return "offi";
+    if (mcl.startsWith("205")) return "nrg";
+    if (mcl.startsWith("206")) return "indu";
+  }
+  return "apt"; // 기본 (도시 매물 다수)
+}
+
+// 인근 낙찰 통계 — courtauction selectAuctnTongSrchRslt
+async function NearbyAuctionStats({ courtCode, caseNo }: { courtCode: string; caseNo: string }) {
+  const stats = await fetchAuctionStats(courtCode, caseNo);
+  if (!stats) return null;
+  const summary = (stats.dma_result ?? stats) as Record<string, unknown>;
+  const items = Object.entries(summary).filter(
+    ([, v]) => v !== null && v !== "" && (typeof v !== "object" || (Array.isArray(v) && v.length > 0)),
+  );
+  if (items.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">인근 낙찰 통계</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono">
+          {items.slice(0, 30).map(([k, v]) => (
+            <div key={k} className="flex gap-2">
+              <dt className="text-muted-foreground w-32 shrink-0">{k}</dt>
+              <dd className="break-words">
+                {Array.isArray(v) ? `${v.length}건` : String(v)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+// 권리분석 요약 카드 — 입찰 전 위험·진행상태·말소기준권리 한눈에
+function PropertyRiskCard({ p }: { p: Awaited<ReturnType<typeof fetchProperty>> }) {
+  if (!p) return null;
+  const flags = parseRiskFlags(p.rmk);
+  const lien = parsePrimaryLien(p.primary_liens);
+  const stat = parseCaseStatus(p.case_prog, p.susp_stat, p.susp_rsn);
+  const dpos = parseDposRate(p.dpos_rate);
+  const d = dDay(p.sale_date);
+
+  const courtCode = p.cases?.court_code ?? "";
+  const caseNo = p.cases?.case_no ?? "";
+  const officialUrl = courtCode && caseNo ? courtauctionLink(courtCode, caseNo) : null;
+
+  const hasDanger = flags.some((f) => f.level === "danger") || stat?.level === "danger";
+
+  return (
+    <Card className={hasDanger ? "border-red-300 bg-red-50/40" : ""}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          {hasDanger && <span className="text-red-600">⚠</span>}
+          입찰 전 핵심 정보
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {/* D-day + 진행상태 + 보증금률 */}
+        <div className="flex flex-wrap items-center gap-2">
+          {d != null && (
+            <Badge variant={d <= 7 ? "destructive" : d <= 30 ? "secondary" : "outline"}
+                   className="font-mono">
+              {fmtDDay(d)} · {fmtDate(p.sale_date)}
+            </Badge>
+          )}
+          {stat && (
+            <Badge variant="outline" className={
+              stat.level === "danger" ? "bg-red-100 text-red-900 border-red-300"
+              : stat.level === "warn" ? "bg-amber-100 text-amber-900 border-amber-300"
+              : "bg-green-50 text-green-900 border-green-300"
+            }>
+              {stat.label}{stat.reason ? ` · ${stat.reason}` : ""}
+            </Badge>
+          )}
+          {dpos && (
+            <Badge variant="outline" className={
+              dpos.isSpecial ? "bg-yellow-100 text-yellow-900 border-yellow-300" : ""
+            }>
+              매수신청 보증금 {dpos.rate}%{dpos.isSpecial ? " (특별)" : ""}
+            </Badge>
+          )}
+        </div>
+
+        {/* 위험·정보 배지 */}
+        {flags.length > 0 && (
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">물건 비고</div>
+            <div className="flex flex-wrap gap-1.5">
+              {flags.map((f, i) => (
+                <Badge key={i} variant="outline" className={
+                  f.level === "danger" ? "bg-red-100 text-red-900 border-red-300"
+                  : f.level === "warn" ? "bg-orange-100 text-orange-900 border-orange-300"
+                  : "bg-blue-50 text-blue-900 border-blue-300"
+                } title={f.desc}>
+                  {f.label}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 말소기준권리 후보 */}
+        {lien && (
+          <div className="rounded-md border bg-background p-2.5">
+            <div className="text-xs text-muted-foreground mb-1">말소기준권리 (후보)</div>
+            <div className="font-mono text-sm">
+              <span className="font-semibold">{lien.date}</span>
+              <span className="ml-2">{lien.type}</span>
+            </div>
+            {lien.others.length > 0 && (
+              <div className="text-xs text-muted-foreground mt-1">
+                ↓ 후순위 {lien.others.length}건
+                <ul className="list-disc list-inside font-mono">
+                  {lien.others.slice(0, 5).map((o, i) => <li key={i}>{o}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="text-[10px] text-muted-foreground mt-1.5">
+              ※ 자동 추출 — 정확한 권리분석은 매각물건명세서·등기부등본 직접 확인
+            </div>
+          </div>
+        )}
+
+        {/* 청구금액 */}
+        {p.claim_amt != null && (
+          <div className="text-xs">
+            청구금액 <span className="font-mono font-semibold">{fmtMoney(Number(p.claim_amt))}</span>
+            {p.appraisal_amount && Number(p.claim_amt) > 0 && (
+              <span className="text-muted-foreground ml-1">
+                (감정가의 {Math.round(Number(p.claim_amt) / p.appraisal_amount * 100)}%)
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 공식 사이트 딥링크 */}
+        {officialUrl && (
+          <div className="flex items-center gap-3 pt-1 text-xs">
+            <a href={officialUrl} target="_blank" rel="noopener noreferrer"
+               className="text-blue-600 hover:underline">
+              공식 사이트에서 보기 ↗
+            </a>
+            <span className="text-muted-foreground">
+              매각물건명세서 · 현황조사서 · 감정평가서는 공식 사이트에서 PDF로 제공
+            </span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
