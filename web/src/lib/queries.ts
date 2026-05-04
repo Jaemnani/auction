@@ -315,10 +315,11 @@ export async function fetchUsageList(level: 1 | 2 | 3, parentCode?: string) {
 
 // ---------- 지도용 좌표 ----------
 
-// 지도용 — fetchProperties의 100-row cap 우회. 좌표 있는 매물만 직접 fetch.
-// PostgREST 1000 row 한도가 있어 max 1000 권장. 더 필요하면 페이징.
+// 지도용 — bbox(viewport) 안의 매물만 가져오면 한도 안에 풍부한 마커 노출 가능
+export type Bbox = { minLng: number; minLat: number; maxLng: number; maxLat: number };
+
 export async function fetchPropertiesForMap(
-  filters: PropertyFilters, max = 1000,
+  filters: PropertyFilters, max = 1000, bbox?: Bbox,
 ): Promise<Property[]> {
   let q: FilterableQuery = supabase
     .from("properties")
@@ -327,6 +328,10 @@ export async function fetchPropertiesForMap(
     .not("longitude", "is", null)
     .not("latitude", "is", null);
   q = applyFilters(q, filters);
+  if (bbox) {
+    q = q.gte("longitude", bbox.minLng).lte("longitude", bbox.maxLng)
+         .gte("latitude",  bbox.minLat).lte("latitude",  bbox.maxLat);
+  }
   q = q.order("sale_date", { ascending: true, nullsFirst: false });
 
   const PAGE = 1000;
