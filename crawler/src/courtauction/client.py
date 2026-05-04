@@ -62,12 +62,13 @@ class StructureChanged(CourtAuctionError):
 @dataclass
 class ClientConfig:
     base_url: str = BASE_URL
-    concurrency: int = 5
-    min_interval_ms: int = 200          # 클라이언트 단위 요청 간격
+    concurrency: int = 2                # 병렬 너무 많으면 IP 차단
+    min_interval_ms: int = 500          # 요청 간격 (200ms도 차단 유발)
     timeout_s: float = 30.0
     max_retries: int = 5
     backoff_base_s: float = 0.5
-    backoff_max_s: float = 30.0
+    backoff_max_s: float = 60.0
+    ip_block_pause_s: float = 90.0      # IP 차단 감지 시 추가 대기
     save_dir: Path | None = None        # raw response 저장
     dead_letter_path: Path | None = None  # 영구 실패 jsonl
     extra_headers: dict[str, str] | None = None
@@ -172,12 +173,13 @@ class CourtAuctionClient:
                 try:
                     await self._throttle()
                     r = await self._client.post(path, json=payload)
-                except (httpx.TimeoutException, httpx.NetworkError) as e:
+                except (httpx.TimeoutException, httpx.NetworkError,
+                        httpx.RemoteProtocolError) as e:
                     last_err = e
                     delay = min(self.cfg.backoff_base_s * (2 ** attempt),
                                 self.cfg.backoff_max_s)
                     logger.warning("network error %s on %s (attempt %d), retry in %.1fs",
-                                   e, path, attempt + 1, delay)
+                                   type(e).__name__, path, attempt + 1, delay)
                     await asyncio.sleep(delay)
                     continue
 
@@ -208,6 +210,20 @@ class CourtAuctionClient:
                 raise StructureChanged(f"envelope status != 200 on {path}")
 
             data = body.get("data")
+
+            # IP 차단 감지: 응답 message에 "보안정책" 포함 또는 data.ipcheck == False
+            msg = body.get("message") or ""
+            ipchecked_ok = (
+                not isinstance(data, dict) or data.get("ipcheck") is not False
+            )
+            if "보안정책" in msg or "차단" in msg or not ipchecked_ok:
+                logger.warning("IP block detected on %s — pausing %.1fs (attempt %d/%d): msg=%s",
+                               path, self.cfg.ip_block_pause_s,
+                               attempt + 1, self.cfg.max_retries, msg[:80])
+                await asyncio.sleep(self.cfg.ip_block_pause_s)
+                last_err = TransientError(f"IP block on {path}")
+                continue
+
             if expect_keys and isinstance(data, dict):
                 missing = [k for k in expect_keys if k not in data]
                 if missing:

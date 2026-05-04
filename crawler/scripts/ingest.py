@@ -223,12 +223,17 @@ async def cmd_detail(args: argparse.Namespace) -> None:
 # ---------- backfill ----------
 
 async def cmd_backfill(args: argparse.Namespace) -> None:
+    """detail 백필 — 동시 요청 N개로 병렬 처리.
+
+    --concurrency N (기본 5): 동시에 처리할 매물 수
+    한 매물당: API 1회 호출 + DB upsert (sync) → asyncio.to_thread로 분리
+    """
     store = Store()
     run_id = store.start_run("backfill_details",
-                             {"limit": args.limit, "court": args.court})
+                             {"limit": args.limit, "court": args.court,
+                              "concurrency": args.concurrency})
     started = time.monotonic()
 
-    # detail이 비어있는 properties 추출
     q = (
         store.sb.table("properties")
         .select("id, maemul_ser, cases!inner(court_code, case_no)")
@@ -239,30 +244,49 @@ async def cmd_backfill(args: argparse.Namespace) -> None:
         q = q.eq("cases.court_code", args.court)
     res = q.execute()
     targets = res.data or []
-    print(f"  targets: {len(targets)}")
+    print(f"  targets: {len(targets)} (concurrency={args.concurrency})")
 
     totals = {"requested": len(targets), "ok": 0, "failed": 0}
+    sem = asyncio.Semaphore(args.concurrency)
+    last_print = time.monotonic()
+
     try:
         async with _make_client(save_raw=args.save_raw) as c:
-            for t in targets:
+            async def worker(t: dict) -> None:
+                nonlocal last_print
                 court = t["cases"]["court_code"]
                 case_no = t["cases"]["case_no"]
                 seq = t["maemul_ser"]
-                try:
-                    result = await c.get_case_detail(court, case_no, seq)
-                    store.upsert_detail(court, case_no, seq, result)
-                    totals["ok"] += 1
-                    print(f"    + {court}/{case_no}#{seq}")
-                except Exception as e:
-                    totals["failed"] += 1
-                    print(f"    ! {court}/{case_no}#{seq}: {e}")
+                async with sem:
+                    try:
+                        result = await c.get_case_detail(court, case_no, seq)
+                        # upsert_detail은 동기 — 별도 스레드에서 실행
+                        await asyncio.to_thread(
+                            store.upsert_detail, court, case_no, seq, result
+                        )
+                        totals["ok"] += 1
+                    except Exception as e:
+                        totals["failed"] += 1
+                        print(f"    ! {court}/{case_no}#{seq}: {e}")
+                    # 진행률 한 줄 (최소 5초 간격)
+                    now = time.monotonic()
+                    if now - last_print >= 5.0:
+                        last_print = now
+                        elapsed = now - started
+                        rate = totals["ok"] / max(elapsed, 0.001)
+                        eta_s = (totals["requested"] - totals["ok"] - totals["failed"]) / max(rate, 0.001)
+                        print(f"    progress: ok={totals['ok']} fail={totals['failed']} "
+                              f"rate={rate:.2f}/s eta={eta_s/60:.1f}min")
+
+            await asyncio.gather(*[worker(t) for t in targets])
         store.finish_run(run_id, totals=totals)
     except Exception as e:
         store.finish_run(run_id, totals=totals, status="failed", error=str(e))
         raise
 
     elapsed = time.monotonic() - started
-    print(f"\n[done] backfill → {totals} ({elapsed:.1f}s)")
+    print(f"\n[done] backfill → {totals} ({elapsed:.1f}s, "
+          f"{totals['ok']/elapsed:.1f}/s)")
 
 
 # ---------- backfill photos ----------
@@ -528,6 +552,8 @@ def main() -> None:
     p_b = sub.add_parser("backfill-details", help="detail 미수집 properties 일괄 채움")
     p_b.add_argument("--limit", type=int, default=100)
     p_b.add_argument("--court", default=None)
+    p_b.add_argument("--concurrency", type=int, default=2,
+                     help="동시 detail 호출 수 (기본 2 — 더 늘리면 IP 차단)")
     p_b.set_defaults(func=cmd_backfill)
 
     p_p = sub.add_parser("backfill-photos",

@@ -346,7 +346,124 @@ class Store:
         return {"case_id": case_id, "property_id": prop.data["id"]}
 
     def upsert_search_rows(self, rows: list[dict]) -> int:
-        """배치 호출 — 내부적으로 row마다 case/property 자연키로 select 필요해 단건 직렬 처리."""
+        """진짜 배치 — 페이지(50개) 전체를 2~3 round-trip으로 처리.
+
+        흐름:
+          1) 모든 row에서 (court_code, case_no) 유니크 추출 → cases 일괄 upsert (returning=ids)
+          2) 그 응답으로 (court+case_no → case_id) 맵 구성
+          3) 모든 row를 properties payload로 변환 → 일괄 upsert
+        """
+        if not rows:
+            return 0
+
+        # 1) cases dedupe + 일괄 upsert
+        case_seen: dict[tuple[str, str], dict] = {}
+        for r in rows:
+            court = _str(r.get("boCd") or r.get("cortOfcCd"))
+            case_no = _str(r.get("srnSaNo"))
+            if not court or not case_no:
+                continue
+            payload = {
+                "court_code": court,
+                "case_no": case_no,
+                "sa_no": _str(r.get("saNo")),
+                "case_name": _str(r.get("saMyung") or r.get("csNm")),
+                "jdbn_cd": _str(r.get("jdbnCd")),
+                "jdbn_name": _str(r.get("jpDeptNm") or r.get("jdbnNm")),
+                "tel": _str(r.get("tel")),
+                "is_real_estate": True,
+                "last_synced_at": datetime.utcnow().isoformat(),
+            }
+            case_seen[(court, case_no)] = {k: v for k, v in payload.items() if v is not None}
+
+        if not case_seen:
+            return 0
+
+        case_resp = (
+            self.sb.table("cases")
+            .upsert(list(case_seen.values()), on_conflict="court_code,case_no")
+            .execute()
+        )
+        # supabase upsert with default returning=representation gives back id+row
+        case_map: dict[tuple[str, str], str] = {}
+        for c in case_resp.data or []:
+            case_map[(c["court_code"], c["case_no"])] = c["id"]
+
+        # supabase가 가끔 inserted/updated row를 모두 안 돌려줌 — 누락 분은 select로 채움
+        missing_keys = [k for k in case_seen if k not in case_map]
+        if missing_keys:
+            for court, case_no in missing_keys:
+                r = (
+                    self.sb.table("cases").select("id")
+                    .eq("court_code", court).eq("case_no", case_no)
+                    .single().execute()
+                )
+                case_map[(court, case_no)] = r.data["id"]
+
+        # 2) properties payload 일괄 구성
+        prop_payloads: list[dict] = []
+        for r in rows:
+            court = _str(r.get("boCd") or r.get("cortOfcCd"))
+            case_no = _str(r.get("srnSaNo"))
+            if not court or not case_no:
+                continue
+            case_id = case_map.get((court, case_no))
+            if not case_id:
+                continue
+            maemul_ser = _to_int(r.get("maemulSer")) or 1
+            payload = {
+                "case_id": case_id,
+                "maemul_ser": maemul_ser,
+                "mokmul_ser": _to_int(r.get("mokmulSer")),
+                "docid": _str(r.get("docid")),
+                "appraisal_amount": _to_int(r.get("gamevalAmt")),
+                "min_sale_price": _to_int(r.get("minmaePrice")),
+                "current_sale_price": _to_int(r.get("currentMaemaePrice")
+                                              or r.get("maemaePrice")),
+                "fail_count": _to_int(r.get("yuchalCnt")),
+                "sale_date": _to_date(r.get("maeGiil")),
+                "sale_decision_date": _to_date(r.get("maegyuljGiil")),
+                "status_cd": _str(r.get("maemulStatCd") or r.get("statCd")),
+                "usage_lcl_cd": _str(r.get("lclsUtilCd")),
+                "usage_mcl_cd": _str(r.get("mclsUtilCd")),
+                "usage_scl_cd": _str(r.get("sclsUtilCd")),
+                "sd_code": _str(r.get("daepyoSidoCd")),
+                "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
+                "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
+                "rd_code": _str(r.get("daepyoRdCd")),
+                "lot_no": _str(r.get("daepyoLotno")),
+                "conv_addr": _str(r.get("convAddr") or r.get("daepyoAddr")),
+                "road_addr": _clean_addr(r.get("bgPlaceRdAllAddr") or r.get("rdAllAddr")),
+                "lot_addr":  _clean_addr(r.get("bgPlaceLotAllAddr") or r.get("lotAllAddr")),
+                "building_summary": _str(r.get("buldList")),
+                "area_summary":     _str(r.get("areaList")),
+                **(_lnglat_payload(r)),
+                "search_row": r,
+                "last_synced_at": datetime.utcnow().isoformat(),
+            }
+            prop_payloads.append({k: v for k, v in payload.items() if v is not None})
+
+        if not prop_payloads:
+            return 0
+
+        # case_id+maemul_ser 중복 dedupe (last-wins)
+        prop_seen: dict[tuple[str, int], dict] = {}
+        for p in prop_payloads:
+            prop_seen[(p["case_id"], p["maemul_ser"])] = p
+        deduped = list(prop_seen.values())
+
+        # 작은 chunk (search_row jsonb 큼 + GIST/trgm 인덱스 갱신 비용)
+        # 25개씩 잘라서 timeout 회피 — 페이지(50) 기준 2 round-trip
+        PROP_CHUNK = 25
+        for chunk in _chunked(deduped, PROP_CHUNK):
+            self.sb.table("properties").upsert(
+                chunk, on_conflict="case_id,maemul_ser",
+                returning="minimal",  # 응답에 row 데이터 포함하지 않음 → 빠름
+            ).execute()
+        return len(deduped)
+
+    # 단건 호출은 호환용으로 유지
+    def upsert_search_rows_loop(self, rows: list[dict]) -> int:
         n = 0
         for r in rows:
             try:
@@ -423,10 +540,23 @@ class Store:
             if cs_payload:
                 self.sb.table("cases").update(cs_payload).eq("id", case_id).execute()
 
-        # properties.detail_result 통째 보존
+        # properties.detail_result — 웹에서 쓰는 키만 발췌 (picFile base64 제외)
+        # 매각기일/사진은 별도 테이블에 저장되므로 detail_result에서 제외
+        slim_detail = {
+            "csBaseInfo":         dma_result.get("csBaseInfo"),
+            "dspslGdsDxdyInfo":   dma_result.get("dspslGdsDxdyInfo"),
+            "aeeWevlMnpntLst":    dma_result.get("aeeWevlMnpntLst"),
+            "rgltLandLstAll":     dma_result.get("rgltLandLstAll"),
+            "bldSdtrDtlLstAll":   dma_result.get("bldSdtrDtlLstAll"),
+            "gdsRletStLtnoLstAll": dma_result.get("gdsRletStLtnoLstAll"),
+            "dstrtDemnInfo":      dma_result.get("dstrtDemnInfo"),
+            "gdsDspslObjctLst":   dma_result.get("gdsDspslObjctLst"),
+            "picDvsIndvdCnt":     dma_result.get("picDvsIndvdCnt"),
+        }
+        slim_detail = {k: v for k, v in slim_detail.items() if v not in (None, [], {})}
         self.sb.table("properties").update(
             {
-                "detail_result": dma_result,
+                "detail_result": slim_detail,
                 "detail_synced_at": datetime.utcnow().isoformat(),
                 "last_synced_at": datetime.utcnow().isoformat(),
             }
@@ -452,8 +582,19 @@ class Store:
                 sale_rows, on_conflict="property_id,seq",
             ).execute()
 
-        # 사진 목록 — base64는 Storage에 업로드하고 raw에서 제외
-        pics = dma_result.get("csPicLst") or []
+        # 사진 목록 — base64는 Storage에 업로드하고 raw에서 제외.
+        # Supabase 무료 5GB 제한 안에 머물기 위해 매물당 첫 1장(대표사진)만.
+        # 환경변수 PHOTOS_PER_PROPERTY로 override 가능 (0=비저장, ""=전체).
+        max_per = os.environ.get("PHOTOS_PER_PROPERTY", "1")
+        all_pics = dma_result.get("csPicLst") or []
+        if max_per == "":
+            pics = all_pics
+        else:
+            try:
+                n = int(max_per)
+                pics = all_pics[:n] if n > 0 else []
+            except ValueError:
+                pics = all_pics[:1]
         if pics:
             photo_rows = []
             for i, p in enumerate(pics, start=1):
