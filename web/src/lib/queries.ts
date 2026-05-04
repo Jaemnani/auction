@@ -24,32 +24,17 @@ export type PropertyListResult = {
   pageSize: number;
 };
 
-export async function fetchProperties(
-  filters: PropertyFilters,
-): Promise<PropertyListResult> {
-  const page = Math.max(1, filters.page ?? 1);
-  const pageSize = Math.min(100, Math.max(10, filters.page_size ?? 30));
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
-
-  let q = supabase
-    .from("properties")
-    .select(LIST_PROPERTY_SELECT, { count: "estimated" })  // exact는 17k+ JSON path와 함께 타임아웃
-    .is("deleted_at", null);
-
-  // 법원
-  if (filters.court) q = q.eq("cases.court_code", filters.court);
-
-  // 지역
-  if (filters.sd) q = q.eq("sd_code", filters.sd);
-  if (filters.sgg) q = q.eq("sgg_code", filters.sgg);
-
-  // 용도
+// 공통 필터 적용 — list/map 모두 사용. supabase-js 빌더 타입이 무한 재귀라 any로 우회.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type FilterableQuery = any;
+function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQuery {
+  if (filters.court)    q = q.eq("cases.court_code", filters.court);
+  if (filters.sd)       q = q.eq("sd_code", filters.sd);
+  if (filters.sgg)      q = q.eq("sgg_code", filters.sgg);
   if (filters.usage_lcl) q = q.eq("usage_lcl_cd", filters.usage_lcl);
   if (filters.usage_mcl) q = q.eq("usage_mcl_cd", filters.usage_mcl);
   if (filters.usage_scl) q = q.eq("usage_scl_cd", filters.usage_scl);
 
-  // 가격 (만원 단위 입력 → 원 단위 비교; 만원 = 10000)
   const wonMin = (mw?: number) => (mw ? mw * 10000 : undefined);
   const minAppraisal = wonMin(filters.min_appraisal);
   const maxAppraisal = wonMin(filters.max_appraisal);
@@ -60,37 +45,24 @@ export async function fetchProperties(
   if (minSale !== undefined) q = q.gte("min_sale_price", minSale);
   if (maxSale !== undefined) q = q.lte("min_sale_price", maxSale);
 
-  // 유찰횟수
   if (filters.min_fail !== undefined) q = q.gte("fail_count", filters.min_fail);
   if (filters.max_fail !== undefined) q = q.lte("fail_count", filters.max_fail);
 
-  // 매각기일 범위
   if (filters.sale_from) q = q.gte("sale_date", filters.sale_from);
-  if (filters.sale_to) q = q.lte("sale_date", filters.sale_to);
+  if (filters.sale_to)   q = q.lte("sale_date", filters.sale_to);
 
-  // 매각기일 미래만 (이미 끝난 회차 제외)
   if (filters.upcoming_only) {
     const today = new Date().toISOString().slice(0, 10);
     q = q.gte("sale_date", today);
   }
 
-  // 주소(도로명) 보유 여부 필터
-  if (filters.addr_state === "with_road") {
-    q = q.not("road_addr", "is", null);
-  } else if (filters.addr_state === "no_road") {
-    q = q.is("road_addr", null);
-  }
+  if (filters.addr_state === "with_road") q = q.not("road_addr", "is", null);
+  else if (filters.addr_state === "no_road") q = q.is("road_addr", null);
 
-  // 매각가율 (%) — DB에 별도 컬럼이 없으니 PostgREST 식 비교 어려움
-  // → 클라이언트에서 row 받은 후 후처리 필터로 적용 (아래 fetchProperties에서)
-
-  // 키워드 — 사건번호처럼 보이면 case_no로 직접 매칭, 아니면 주소들 OR
-  // (PostgREST OR 안에서는 nested 테이블 ilike 미지원)
   if (filters.q && filters.q.trim()) {
     const kw = filters.q.trim();
     const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
     if (looksLikeCaseNo) {
-      // foreign table 직접 ilike — PostgREST는 .eq처럼 지원
       q = q.ilike("cases.case_no", `%${kw}%`);
     } else {
       q = q.or(
@@ -98,22 +70,33 @@ export async function fetchProperties(
       );
     }
   }
+  return q;
+}
+
+export async function fetchProperties(
+  filters: PropertyFilters,
+): Promise<PropertyListResult> {
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.min(100, Math.max(10, filters.page_size ?? 30));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let q: FilterableQuery = supabase
+    .from("properties")
+    .select(LIST_PROPERTY_SELECT, { count: "estimated" })
+    .is("deleted_at", null);
+  q = applyFilters(q, filters);
 
   // 정렬
   switch (filters.sort) {
     case "appraisal_desc":
-      q = q.order("appraisal_amount", { ascending: false, nullsFirst: false });
-      break;
+      q = q.order("appraisal_amount", { ascending: false, nullsFirst: false }); break;
     case "appraisal_asc":
-      q = q.order("appraisal_amount", { ascending: true, nullsFirst: false });
-      break;
+      q = q.order("appraisal_amount", { ascending: true, nullsFirst: false }); break;
     case "fail_desc":
-      q = q.order("fail_count", { ascending: false, nullsFirst: false });
-      break;
+      q = q.order("fail_count", { ascending: false, nullsFirst: false }); break;
     case "discount_desc":
-      // 매각가율 = min_sale_price / appraisal_amount (할인율 큰 순 = ratio 작은 순)
-      q = q.order("min_sale_price", { ascending: true, nullsFirst: false });
-      break;
+      q = q.order("min_sale_price", { ascending: true, nullsFirst: false }); break;
     case "sale_date":
     default:
       q = q.order("sale_date", { ascending: true, nullsFirst: false });
@@ -332,11 +315,47 @@ export async function fetchUsageList(level: 1 | 2 | 3, parentCode?: string) {
 
 // ---------- 지도용 좌표 ----------
 
-export async function fetchPropertiesForMap(filters: PropertyFilters, max = 1000) {
-  const page = await fetchProperties({ ...filters, page: 1, page_size: max });
-  return page.rows.filter((r) =>
+// 지도용 — fetchProperties의 100-row cap 우회. 좌표 있는 매물만 직접 fetch.
+// PostgREST 1000 row 한도가 있어 max 1000 권장. 더 필요하면 페이징.
+export async function fetchPropertiesForMap(
+  filters: PropertyFilters, max = 1000,
+): Promise<Property[]> {
+  let q: FilterableQuery = supabase
+    .from("properties")
+    .select(LIST_PROPERTY_SELECT)
+    .is("deleted_at", null)
+    .not("longitude", "is", null)
+    .not("latitude", "is", null);
+  q = applyFilters(q, filters);
+  q = q.order("sale_date", { ascending: true, nullsFirst: false });
+
+  const PAGE = 1000;
+  const collected: Property[] = [];
+  let offset = 0;
+  while (collected.length < max) {
+    const lim = Math.min(PAGE, max - collected.length);
+    const { data, error } = await q.range(offset, offset + lim - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as unknown as Property[];
+    if (rows.length === 0) break;
+    collected.push(...rows);
+    if (rows.length < lim) break;
+    offset += lim;
+  }
+  // 한국 영토 박스 필터 + 매각가율 필터 (클라이언트)
+  let out = collected.filter((r) =>
     r.longitude !== null && r.latitude !== null
     && r.longitude >= 124 && r.longitude <= 132.5
     && r.latitude  >= 33  && r.latitude  <= 39,
   );
+  if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
+    const lo = filters.min_rate ?? 0;
+    const hi = filters.max_rate ?? 1000;
+    out = out.filter((r) => {
+      if (!r.appraisal_amount || !r.min_sale_price) return false;
+      const rate = (r.min_sale_price / r.appraisal_amount) * 100;
+      return rate >= lo && rate <= hi;
+    });
+  }
+  return out;
 }

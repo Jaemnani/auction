@@ -15,7 +15,7 @@ export default async function MapPage(props: PageProps<"/map">) {
     fetchCourts(),
     fetchSdList(),
     fetchUsageList(1),
-    fetchPropertiesForMap(filters, 500),
+    fetchPropertiesForMap(filters, 5000),
   ]);
 
   return (
@@ -27,7 +27,7 @@ export default async function MapPage(props: PageProps<"/map">) {
         initial={filters}
       />
       <div className="text-sm text-muted-foreground">
-        좌표가 있는 매물 <strong>{rows.length}</strong>건 (최대 500개 표시)
+        좌표가 있는 매물 <strong>{rows.length}</strong>건 (최대 5,000개 표시 — 더 많으면 필터로 좁히세요)
       </div>
       <PropertyMap rows={rows} />
     </div>
