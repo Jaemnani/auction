@@ -29,6 +29,14 @@ export function parseFiltersFromSearchParams(
   if (get("upcoming_only") === "1" || get("upcoming_only") === "true") {
     out.upcoming_only = true;
   }
+  // exclude_flags: 콤마 구분 (URL에서 단일 키 사용해 간결하게)
+  const ef = get("exclude_flags");
+  if (ef) {
+    out.exclude_flags = ef
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => /^[a-z_]+$/.test(s));
+  }
   return out;
 }
 
@@ -41,6 +49,10 @@ export function buildHref(
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(merged)) {
     if (v === undefined || v === null || v === "") continue;
+    if (Array.isArray(v)) {
+      if (v.length > 0) params.set(k, v.join(","));
+      continue;
+    }
     params.set(k, String(v));
   }
   const qs = params.toString();

@@ -541,6 +541,75 @@ async def cmd_backfill_addrs(args: argparse.Namespace) -> None:
     print(f"\n[done] backfill-addrs → {totals} ({elapsed:.1f}s)")
 
 
+# ---------- backfill-risk-flags ----------
+
+async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
+    """detail_result가 있는데 risk_flags가 비어있는 매물에 대해 일괄 분석.
+
+    detail 재호출 없이 DB의 detail_result만 읽어 분석 → properties.risk_flags 갱신.
+    --force 옵션은 기존 risk_flags가 채워져있어도 재계산.
+    """
+    from courtauction.risk_flags import compute_risk_flags  # noqa: E402
+
+    store = Store()
+    started = time.monotonic()
+    n_updated = 0
+    n_seen = 0
+    page_size = max(50, int(args.batch))
+    last_id: str | None = None
+
+    while True:
+        q = (
+            store.sb.table("properties")
+            .select(
+                "id, detail_result, appraisal_amount, fail_count, "
+                "usage_lcl_cd, usage_mcl_cd, area_summary, building_summary, risk_flags"
+            )
+            .not_.is_("detail_result", "null")
+            .order("id")
+            .limit(page_size)
+        )
+        if last_id:
+            q = q.gt("id", last_id)
+        if not args.force:
+            # risk_flags가 빈 array인 row만 — PostgREST 비교: eq.{} (배열 비교)
+            q = q.eq("risk_flags", "{}")
+        if args.limit and n_seen >= args.limit:
+            break
+        res = q.execute()
+        rows = res.data or []
+        if not rows:
+            break
+
+        for r in rows:
+            n_seen += 1
+            last_id = r["id"]
+            flags = compute_risk_flags(
+                detail_result=r.get("detail_result"),
+                appraisal_amount=r.get("appraisal_amount"),
+                fail_count=r.get("fail_count"),
+                usage_lcl_cd=r.get("usage_lcl_cd"),
+                usage_mcl_cd=r.get("usage_mcl_cd"),
+                area_summary=r.get("area_summary"),
+                building_summary=r.get("building_summary"),
+            )
+            prev = r.get("risk_flags") or []
+            if sorted(prev) == sorted(flags):
+                continue  # 변경 없음 — skip
+            store.sb.table("properties").update({"risk_flags": flags}).eq(
+                "id", r["id"]
+            ).execute()
+            n_updated += 1
+            if n_updated % 100 == 0:
+                print(f"  ... {n_updated} updated (seen {n_seen})")
+
+        if args.limit and n_seen >= args.limit:
+            break
+
+    elapsed = time.monotonic() - started
+    print(f"\n[done] backfill-risk-flags → updated={n_updated}, seen={n_seen} ({elapsed:.1f}s)")
+
+
 # ---------- reverse geocoding (Kakao Local) ----------
 
 async def cmd_reverse_geocode(args: argparse.Namespace) -> None:
@@ -760,6 +829,15 @@ def main() -> None:
                          help="search_row의 도로명/지번 주소를 properties.road_addr/lot_addr로 채움")
     p_a.add_argument("--limit", type=int, default=10000)
     p_a.set_defaults(func=cmd_backfill_addrs)
+
+    p_rf = sub.add_parser("backfill-risk-flags",
+        help="detail_result를 분석해 risk_flags 컬럼 채움 (체크박스 필터용)")
+    p_rf.add_argument("--batch", type=int, default=200)
+    p_rf.add_argument("--limit", type=int, default=0,
+                      help="최대 처리 매물 수 (0=무제한)")
+    p_rf.add_argument("--force", action="store_true",
+                      help="기존 risk_flags가 채워져있어도 재계산")
+    p_rf.set_defaults(func=cmd_backfill_risk_flags)
 
     p_g = sub.add_parser("reverse-geocode",
                          help="좌표만 있고 도로명 없는 매물에 Kakao Local API로 주소 채움")

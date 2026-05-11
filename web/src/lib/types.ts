@@ -105,6 +105,7 @@ export type PropertyFilters = {
   addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
   sale_from?: string; // 매각기일 from
   sale_to?: string;
+  exclude_flags?: string[];  // risk_flags 코드 — 매물의 risk_flags와 overlap 시 제외
   page?: number;
   page_size?: number;
   sort?:

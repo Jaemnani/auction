@@ -70,6 +70,18 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
       );
     }
   }
+
+  // 위험 플래그 제외 — risk_flags array가 exclude_flags 중 하나라도 overlap이면 제외.
+  // PostgREST: not.risk_flags.ov.{code1,code2}
+  if (filters.exclude_flags && filters.exclude_flags.length > 0) {
+    // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용
+    const safe = filters.exclude_flags
+      .filter((f) => /^[a-z_]+$/.test(f))
+      .map((f) => f);
+    if (safe.length > 0) {
+      q = q.not("risk_flags", "ov", `{${safe.join(",")}}`);
+    }
+  }
   return q;
 }
 

@@ -608,9 +608,31 @@ class Store:
             "picDvsIndvdCnt":     dma_result.get("picDvsIndvdCnt"),
         }
         slim_detail = {k: v for k, v in slim_detail.items() if v not in (None, [], {})}
+
+        # risk_flags 계산 — 위 detail + 기존 properties 컬럼 종합
+        from .risk_flags import compute_risk_flags  # local import to avoid cycle at module load
+        prop_now = (
+            self.sb.table("properties")
+            .select("appraisal_amount,fail_count,usage_lcl_cd,usage_mcl_cd,area_summary,building_summary")
+            .eq("id", property_id)
+            .maybeSingle()
+            .execute()
+        )
+        p_data = prop_now.data or {}
+        risk = compute_risk_flags(
+            detail_result=slim_detail,
+            appraisal_amount=p_data.get("appraisal_amount"),
+            fail_count=p_data.get("fail_count"),
+            usage_lcl_cd=p_data.get("usage_lcl_cd"),
+            usage_mcl_cd=p_data.get("usage_mcl_cd"),
+            area_summary=p_data.get("area_summary"),
+            building_summary=p_data.get("building_summary"),
+        )
+
         self.sb.table("properties").update(
             {
                 "detail_result": slim_detail,
+                "risk_flags": risk,
                 "detail_synced_at": datetime.utcnow().isoformat(),
                 "last_synced_at": datetime.utcnow().isoformat(),
             }
