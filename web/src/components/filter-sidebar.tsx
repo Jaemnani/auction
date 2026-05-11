@@ -20,11 +20,16 @@ type Props = {
 };
 
 const SORT_OPTIONS: { value: NonNullable<PropertyFilters["sort"]>; label: string }[] = [
-  { value: "sale_date", label: "매각기일 빠른 순" },
-  { value: "appraisal_desc", label: "감정가 높은 순" },
-  { value: "appraisal_asc", label: "감정가 낮은 순" },
-  { value: "fail_desc", label: "유찰 많은 순" },
-  { value: "discount_desc", label: "할인율 높은 순" },
+  { value: "sale_date", label: "매각기일 ↑ (빠른 순)" },
+  { value: "sale_date_desc", label: "매각기일 ↓ (늦은 순)" },
+  { value: "appraisal_asc", label: "감정가 ↑ (낮은 순)" },
+  { value: "appraisal_desc", label: "감정가 ↓ (높은 순)" },
+  { value: "min_sale_asc", label: "최저가 ↑ (낮은 순)" },
+  { value: "min_sale_desc", label: "최저가 ↓ (높은 순)" },
+  { value: "fail_asc", label: "유찰 ↑ (적은 순)" },
+  { value: "fail_desc", label: "유찰 ↓ (많은 순)" },
+  { value: "discount_desc", label: "할인율 ↓ (높은 순)" },
+  { value: "discount_asc", label: "할인율 ↑ (낮은 순)" },
 ];
 
 export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {

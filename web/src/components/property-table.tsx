@@ -82,8 +82,17 @@ function PropertyRow({ r, usageNames }: { r: Property; usageNames: Record<string
                 : "-"}
             </div>
 
+            {/* 면적 — area_summary는 ㎡로 들어와 있고 AreaText가 ㎡↔평 토글 처리 */}
+            {r.area_summary && (
+              <div className="text-xs">
+                <span className="text-muted-foreground mr-1">면적</span>
+                <span className="font-mono"><AreaText>{r.area_summary}</AreaText></span>
+              </div>
+            )}
+            {/* 동·호수 — building_summary에 "제○동 제○층 제○호" 형식으로 들어있음 */}
             {r.building_summary && (
               <div className="text-xs text-muted-foreground line-clamp-1">
+                <span className="mr-1">위치</span>
                 <AreaText>{r.building_summary}</AreaText>
               </div>
             )}

@@ -87,16 +87,27 @@ export async function fetchProperties(
     .is("deleted_at", null);
   q = applyFilters(q, filters);
 
-  // 정렬
+  // 정렬 — 사용자가 컬럼별 오름/내림 선택. discount는 min_sale_price 대리(낮을수록 할인 큼).
   switch (filters.sort) {
+    case "sale_date_desc":
+      q = q.order("sale_date", { ascending: false, nullsFirst: false }); break;
     case "appraisal_desc":
       q = q.order("appraisal_amount", { ascending: false, nullsFirst: false }); break;
     case "appraisal_asc":
       q = q.order("appraisal_amount", { ascending: true, nullsFirst: false }); break;
+    case "min_sale_asc":
+      q = q.order("min_sale_price", { ascending: true, nullsFirst: false }); break;
+    case "min_sale_desc":
+      q = q.order("min_sale_price", { ascending: false, nullsFirst: false }); break;
     case "fail_desc":
       q = q.order("fail_count", { ascending: false, nullsFirst: false }); break;
+    case "fail_asc":
+      q = q.order("fail_count", { ascending: true, nullsFirst: false }); break;
     case "discount_desc":
+      // 할인율 = min_sale_price / appraisal — DB에서 계산 어려워 min_sale_price 오름차순 대리
       q = q.order("min_sale_price", { ascending: true, nullsFirst: false }); break;
+    case "discount_asc":
+      q = q.order("min_sale_price", { ascending: false, nullsFirst: false }); break;
     case "sale_date":
     default:
       q = q.order("sale_date", { ascending: true, nullsFirst: false });

@@ -107,5 +107,10 @@ export type PropertyFilters = {
   sale_to?: string;
   page?: number;
   page_size?: number;
-  sort?: "sale_date" | "appraisal_desc" | "appraisal_asc" | "fail_desc" | "discount_desc";
+  sort?:
+    | "sale_date" | "sale_date_desc"
+    | "appraisal_desc" | "appraisal_asc"
+    | "min_sale_asc" | "min_sale_desc"
+    | "fail_desc" | "fail_asc"
+    | "discount_desc" | "discount_asc";
 };

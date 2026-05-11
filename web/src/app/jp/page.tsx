@@ -7,6 +7,12 @@ import {
 } from "@/components/ui/table";
 import { supabase, publicStorageUrl, JP_PHOTO_BUCKET } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { extractJpArea, extractJpDongHo, type JpDetailProperty } from "@/lib/jp-detail";
+import { JpSortableHeader } from "@/components/jp-sortable-header";
+import { JpFilterBar } from "@/components/jp-filter-bar";
+import {
+  type JpFilters as SharedJpFilters, parseJpFilters, buildJpHref,
+} from "@/lib/jp-filters";
 
 export const metadata = {
   title: "일본 부동산 경매 — BIT",
@@ -27,6 +33,7 @@ type JpRow = {
   yen_10k_trap: boolean | null;
   status: string | null;
   search_row: { photo_url?: string } | null;
+  detail_result: { properties?: JpDetailProperty[] } | null;
   jp_property_photos: { storage_path: string | null; thumb_path: string | null }[] | null;
   jp_cases: {
     case_no: string | null; case_kind: string | null;
@@ -34,85 +41,28 @@ type JpRow = {
   } | null;
 };
 
-type JpFilters = {
-  page: number;
-  page_size: number;
-  sale_cls: string | null;
-  status: string | null;
-  court: string | null;
-  q: string | null;
-  price_max: number | null;
+type JpFilters = SharedJpFilters;
+
+// 정렬 가능 필드 ↔ DB 컬럼 매핑
+const SORT_COLUMNS: Record<string, string> = {
+  sale_unit_id: "sale_unit_id",
+  sale_cls: "sale_cls",
+  price: "sale_standard_price",
+  bid_period: "bid_period_start",
+  status: "status",
+  address: "address_text",
 };
 
-const DEFAULT_PAGE_SIZE = 20;
+const STATUS_BADGE: Record<string, { label: string; tone: string }> = {
+  period_bid: { label: "期間入札", tone: "bg-blue-100 text-blue-700 border-blue-200" },
+  special_sale: { label: "特別売却", tone: "bg-amber-100 text-amber-700 border-amber-200" },
+  reval_pending: { label: "評価再調整", tone: "bg-purple-100 text-purple-700 border-purple-200" },
+  re_bid: { label: "再入札", tone: "bg-cyan-100 text-cyan-700 border-cyan-200" },
+  closed: { label: "終結", tone: "bg-zinc-100 text-zinc-700 border-zinc-200" },
+  aborted: { label: "中止", tone: "bg-rose-100 text-rose-700 border-rose-200" },
+};
 
-const SALE_CLS_OPTIONS = [
-  { code: "1", label: "土地" },
-  { code: "2", label: "戸建て" },
-  { code: "3", label: "マンション" },
-  { code: "4", label: "その他" },
-];
-
-const STATUS_OPTIONS = [
-  { code: "period_bid", label: "期間入札" },
-  { code: "special_sale", label: "特別売却" },
-  { code: "reval_pending", label: "評価再調整" },
-  { code: "re_bid", label: "再入札" },
-  { code: "closed", label: "終結" },
-  { code: "aborted", label: "中止" },
-];
-
-const STATUS_BADGE: Record<string, { label: string; tone: string }> = Object.fromEntries(
-  STATUS_OPTIONS.map((s) => [s.code, {
-    label: s.label,
-    tone: ({
-      period_bid: "bg-blue-100 text-blue-700 border-blue-200",
-      special_sale: "bg-amber-100 text-amber-700 border-amber-200",
-      reval_pending: "bg-purple-100 text-purple-700 border-purple-200",
-      re_bid: "bg-cyan-100 text-cyan-700 border-cyan-200",
-      closed: "bg-zinc-100 text-zinc-700 border-zinc-200",
-      aborted: "bg-rose-100 text-rose-700 border-rose-200",
-    } as Record<string, string>)[s.code] ?? "bg-muted text-muted-foreground border-border",
-  }])
-);
-
-function parseFilters(sp: Record<string, string | string[] | undefined>): JpFilters {
-  const get = (k: string): string | null => {
-    const v = sp[k];
-    if (Array.isArray(v)) return v[0] ?? null;
-    return v ?? null;
-  };
-  const num = (k: string, dflt: number | null = null): number | null => {
-    const v = get(k);
-    if (v == null) return dflt;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : dflt;
-  };
-  return {
-    page: Math.max(1, num("page", 1) ?? 1),
-    page_size: DEFAULT_PAGE_SIZE,
-    sale_cls: get("sale_cls"),
-    status: get("status"),
-    court: get("court"),
-    q: get("q"),
-    price_max: num("price_max"),
-  };
-}
-
-function buildHref(filters: JpFilters, override: Partial<JpFilters>): string {
-  const merged = { ...filters, ...override };
-  const sp = new URLSearchParams();
-  if (merged.page && merged.page !== 1) sp.set("page", String(merged.page));
-  if (merged.sale_cls) sp.set("sale_cls", merged.sale_cls);
-  if (merged.status) sp.set("status", merged.status);
-  if (merged.court) sp.set("court", merged.court);
-  if (merged.q) sp.set("q", merged.q);
-  if (merged.price_max != null) sp.set("price_max", String(merged.price_max));
-  const qs = sp.toString();
-  return qs ? `/jp?${qs}` : "/jp";
-}
-
-async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: number; courts: { code: string; name: string }[] }> {
+async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: number; courts: { code: string; name: string }[]; prefs: { code: string; name: string }[] }> {
   // 매물
   const from = (filters.page - 1) * filters.page_size;
   const to = from + filters.page_size - 1;
@@ -122,45 +72,62 @@ async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: numb
     .select(
       "sale_unit_id, sale_cls, sale_cls_label, sale_standard_price, bid_deposit, address_text, " +
       "bid_period_start, bid_period_end, yen_10k_trap, status, search_row, " +
+      "detail_result, " +
       "jp_property_photos(storage_path, thumb_path), " +
       "jp_cases!inner(case_no, case_kind, jp_courts!inner(code, name))",
       { count: "estimated" },
     );
+  if (filters.pref) q = q.eq("prefecture_code", filters.pref);
   if (filters.sale_cls) q = q.eq("sale_cls", filters.sale_cls);
   if (filters.status) q = q.eq("status", filters.status);
   if (filters.court) q = q.eq("jp_cases.jp_courts.code", filters.court);
+  if (filters.case_kind) q = q.eq("jp_cases.case_kind", filters.case_kind);
   if (filters.q) {
-    // 주소 또는 사건번호 키워드
     if (/[(令和|平成|\(ケ\)|\(ヌ\))]/.test(filters.q)) {
       q = q.ilike("jp_cases.case_no", `%${filters.q}%`);
     } else {
       q = q.ilike("address_text", `%${filters.q}%`);
     }
   }
-  if (filters.price_max != null) {
-    q = q.lte("sale_standard_price", filters.price_max);
+  if (filters.price_min != null) q = q.gte("sale_standard_price", filters.price_min);
+  if (filters.price_max != null) q = q.lte("sale_standard_price", filters.price_max);
+  if (filters.yen_10k === "1") q = q.eq("yen_10k_trap", true);
+  if (filters.with_geo === "1") {
+    q = q.not("longitude", "is", null).not("latitude", "is", null);
+  }
+  // has_pdf 는 detail_result.has_three_set_pdf jsonb path — postgrest JSON path 지원
+  if (filters.has_pdf === "1") {
+    q = q.eq("detail_result->>has_three_set_pdf", "true");
   }
 
-  q = q
-    .order("bid_period_start", { ascending: true, nullsFirst: false })
-    .range(from, to);
+  // 정렬 — sort/dir이 있으면 그것 사용. 없으면 입찰기간 빠른 순.
+  const sortCol = filters.sort ? SORT_COLUMNS[filters.sort] : null;
+  if (sortCol && !sortCol.includes("(")) {
+    q = q.order(sortCol, {
+      ascending: filters.dir !== "desc",
+      nullsFirst: false,
+    });
+  } else {
+    q = q.order("bid_period_start", { ascending: true, nullsFirst: false });
+  }
+  q = q.range(from, to);
 
   const { data, error, count } = await q;
   if (error) {
     console.error("jp_properties fetch failed:", error.message);
-    return { rows: [], count: 0, courts: [] };
+    return { rows: [], count: 0, courts: [], prefs: [] };
   }
 
-  // 법원 마스터 (필터 셀렉트용)
-  const courtsRes = await supabase
-    .from("jp_courts")
-    .select("code, name")
-    .order("code");
+  const [courtsRes, prefsRes] = await Promise.all([
+    supabase.from("jp_courts").select("code, name").order("code"),
+    supabase.from("jp_prefectures").select("code, name").order("code"),
+  ]);
 
   return {
     rows: (data || []) as unknown as JpRow[],
     count: count ?? 0,
     courts: (courtsRes.data || []) as { code: string; name: string }[],
+    prefs: (prefsRes.data || []) as { code: string; name: string }[],
   };
 }
 
@@ -198,8 +165,8 @@ export default async function JpListingPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await props.searchParams;
-  const filters = parseFilters(sp);
-  const { rows, count, courts } = await fetchJp(filters);
+  const filters = parseJpFilters(sp);
+  const { rows, count, courts, prefs } = await fetchJp(filters);
   const totalPages = Math.max(1, Math.ceil(count / filters.page_size));
 
   const linkCls = (active: boolean, disabled?: boolean) =>
@@ -233,44 +200,8 @@ export default async function JpListingPage(props: {
         </div>
       </section>
 
-      {/* 필터 */}
-      <Card>
-        <CardContent className="p-4">
-          <form method="get" action="/jp" className="grid sm:grid-cols-12 gap-2">
-            <select name="court" defaultValue={filters.court ?? ""}
-                    className="sm:col-span-3 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">법원 — 전체</option>
-              {courts.map((c) => (
-                <option key={c.code} value={c.code}>{c.name}</option>
-              ))}
-            </select>
-            <select name="sale_cls" defaultValue={filters.sale_cls ?? ""}
-                    className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">종별 — 전체</option>
-              {SALE_CLS_OPTIONS.map((o) => (
-                <option key={o.code} value={o.code}>{o.label}</option>
-              ))}
-            </select>
-            <select name="status" defaultValue={filters.status ?? ""}
-                    className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">상태 — 전체</option>
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.code} value={o.code}>{o.label}</option>
-              ))}
-            </select>
-            <input name="price_max" type="number" placeholder="가격 상한 (円)"
-                   defaultValue={filters.price_max ?? ""}
-                   className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm" />
-            <input name="q" placeholder="주소 / 사건번호"
-                   defaultValue={filters.q ?? ""}
-                   className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm" />
-            <button type="submit"
-                    className={cn(buttonVariants({ size: "sm" }), "sm:col-span-1 h-9")}>
-              검색
-            </button>
-          </form>
-        </CardContent>
-      </Card>
+      {/* 필터 — 목록·지도 공통 컴포넌트 */}
+      <JpFilterBar action="/jp" filters={filters} prefs={prefs} courts={courts} />
 
       {/* 리스트 */}
       <Card>
@@ -291,12 +222,26 @@ export default async function JpListingPage(props: {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[80px]">사진</TableHead>
-                  <TableHead className="w-[200px]">사건번호 · 법원</TableHead>
-                  <TableHead className="w-[80px]">종별</TableHead>
-                  <TableHead className="w-[140px] text-right">売却基準</TableHead>
-                  <TableHead className="w-[180px]">入札期間</TableHead>
-                  <TableHead className="w-[100px]">상태</TableHead>
-                  <TableHead>所在地</TableHead>
+                  <TableHead className="w-[200px]">
+                    <JpSortableHeader field="sale_unit_id" label="사건번호 · 법원" />
+                  </TableHead>
+                  <TableHead className="w-[80px]">
+                    <JpSortableHeader field="sale_cls" label="종별" />
+                  </TableHead>
+                  <TableHead className="w-[140px] text-right">
+                    <JpSortableHeader field="price" label="売却基準" align="right" />
+                  </TableHead>
+                  <TableHead className="w-[120px]">面積</TableHead>
+                  <TableHead className="w-[100px]">号室/棟</TableHead>
+                  <TableHead className="w-[180px]">
+                    <JpSortableHeader field="bid_period" label="入札期間" />
+                  </TableHead>
+                  <TableHead className="w-[100px]">
+                    <JpSortableHeader field="status" label="상태" />
+                  </TableHead>
+                  <TableHead>
+                    <JpSortableHeader field="address" label="所在地" />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -305,6 +250,8 @@ export default async function JpListingPage(props: {
                   const caseNo = r.jp_cases?.case_no ?? r.sale_unit_id;
                   const status = r.status ? STATUS_BADGE[r.status] : null;
                   const thumb = thumbUrl(r);
+                  const area = extractJpArea(r.detail_result?.properties);
+                  const dongHo = extractJpDongHo(r.detail_result?.properties);
                   return (
                     <TableRow key={r.sale_unit_id} className="hover:bg-muted/40">
                       <TableCell className="w-[80px]">
@@ -332,6 +279,8 @@ export default async function JpListingPage(props: {
                       <TableCell className="text-xs text-right font-mono">
                         {fmtJpy(r.sale_standard_price)}
                       </TableCell>
+                      <TableCell className="text-xs font-mono">{area ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{dongHo ?? "—"}</TableCell>
                       <TableCell className="text-xs font-mono">
                         {r.bid_period_start && r.bid_period_end
                           ? <>{r.bid_period_start}<br/>~ {r.bid_period_end}</>
@@ -361,20 +310,20 @@ export default async function JpListingPage(props: {
             총 <strong>{count.toLocaleString()}</strong>건 · {filters.page} / {totalPages} 페이지
           </div>
           <div className="flex items-center gap-1">
-            <Link href={buildHref(filters, { page: 1 })}
+            <Link href={buildJpHref("/jp", filters, { page: 1 })}
                   className={linkCls(false, filters.page <= 1)}>«</Link>
-            <Link href={buildHref(filters, { page: filters.page - 1 })}
+            <Link href={buildJpHref("/jp", filters, { page: filters.page - 1 })}
                   className={linkCls(false, filters.page <= 1)}>‹</Link>
             {Array.from(
               { length: Math.min(5, totalPages) },
               (_, i) => Math.max(1, Math.min(totalPages - 4, filters.page - 2)) + i,
             ).filter((p) => p >= 1 && p <= totalPages).map((p) => (
-              <Link key={p} href={buildHref(filters, { page: p })}
+              <Link key={p} href={buildJpHref("/jp", filters, { page: p })}
                     className={linkCls(p === filters.page)}>{p}</Link>
             ))}
-            <Link href={buildHref(filters, { page: filters.page + 1 })}
+            <Link href={buildJpHref("/jp", filters, { page: filters.page + 1 })}
                   className={linkCls(false, filters.page >= totalPages)}>›</Link>
-            <Link href={buildHref(filters, { page: totalPages })}
+            <Link href={buildJpHref("/jp", filters, { page: totalPages })}
                   className={linkCls(false, filters.page >= totalPages)}>»</Link>
           </div>
         </div>

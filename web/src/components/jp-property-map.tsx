@@ -79,30 +79,24 @@ export function JpPropertyMap({ rows }: Props) {
     if (rows.length === 0) return;
 
     for (const r of rows) {
-      const el = document.createElement("div");
-      el.className = "jp-marker";
-      el.style.cssText = `
-        width: 10px; height: 10px; border-radius: 50%;
-        background: #f59e0b; border: 2px solid white;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer;
-      `;
-
       const popupHtml = `
-        <div style="font-size:12px;min-width:180px">
-          <div style="font-weight:600;margin-bottom:4px">${r.court_name ?? "—"}</div>
-          <div style="font-family:monospace;color:#666;margin-bottom:4px">${r.case_no ?? r.sale_unit_id}</div>
-          <div style="margin-bottom:4px">
-            <span style="display:inline-block;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
-            <span style="font-family:monospace;margin-left:6px">${fmtJpy(r.sale_standard_price)}</span>
+        <div style="font-size:12px;min-width:200px">
+          <div style="font-family:monospace;color:#71717a;font-size:11px">${r.case_no ?? r.sale_unit_id}</div>
+          <div style="font-weight:600;margin-top:2px">${r.court_name ?? "—"}</div>
+          ${r.address_text ? `<div style="color:#52525b;font-size:11px;margin-top:2px;word-break:keep-all">${r.address_text}</div>` : ""}
+          <div style="margin-top:6px">
+            <span style="display:inline-block;background:#fed7aa;color:#7c2d12;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
+            <span style="font-family:monospace;margin-left:6px;font-weight:600">${fmtJpy(r.sale_standard_price)}</span>
           </div>
-          ${r.address_text ? `<div style="color:#666;font-size:11px;margin-bottom:6px">${r.address_text}</div>` : ""}
-          <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline">상세 보기 →</a>
+          <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>
         </div>
       `;
 
-      const marker = new maplibregl.Marker({ element: el })
+      // 한국 PropertyMap과 동일: MapLibre 기본 SVG 핀.
+      // 색상은 더 짙은 주황 (orange-700 = #c2410c)으로 일본 시각 구분.
+      const marker = new maplibregl.Marker({ color: "#c2410c" })
         .setLngLat([r.longitude, r.latitude])
-        .setPopup(new Popup({ offset: 12 }).setHTML(popupHtml))
+        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "300px" }).setHTML(popupHtml))
         .addTo(map);
       markersRef.current.push(marker);
     }

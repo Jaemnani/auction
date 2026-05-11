@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { JpPropertyMap, type JpMapRow } from "@/components/jp-property-map";
 import { supabase } from "@/lib/supabase";
+import { JpFilterBar } from "@/components/jp-filter-bar";
+import { type JpFilters, parseJpFilters } from "@/lib/jp-filters";
 
 export const metadata = {
   title: "일본 매물 지도 — BIT",
@@ -10,53 +12,6 @@ export const metadata = {
 };
 
 export const dynamic = "force-dynamic";
-
-type JpFilters = {
-  sale_cls: string | null;
-  status: string | null;
-  court: string | null;
-  q: string | null;
-  price_max: number | null;
-  pref: string | null;
-};
-
-const SALE_CLS_OPTIONS = [
-  { code: "1", label: "土地" },
-  { code: "2", label: "戸建て" },
-  { code: "3", label: "マンション" },
-  { code: "4", label: "その他" },
-];
-
-const STATUS_OPTIONS = [
-  { code: "period_bid", label: "期間入札" },
-  { code: "special_sale", label: "特別売却" },
-  { code: "reval_pending", label: "評価再調整" },
-  { code: "re_bid", label: "再入札" },
-  { code: "closed", label: "終結" },
-  { code: "aborted", label: "中止" },
-];
-
-function parseFilters(sp: Record<string, string | string[] | undefined>): JpFilters {
-  const get = (k: string): string | null => {
-    const v = sp[k];
-    if (Array.isArray(v)) return v[0] ?? null;
-    return v ?? null;
-  };
-  const num = (k: string): number | null => {
-    const v = get(k);
-    if (v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-  return {
-    sale_cls: get("sale_cls"),
-    status: get("status"),
-    court: get("court"),
-    q: get("q"),
-    price_max: num("price_max"),
-    pref: get("pref"),
-  };
-}
 
 async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; courts: { code: string; name: string }[]; prefs: { code: string; name: string }[] }> {
   let q = supabase
@@ -68,12 +23,14 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
     )
     .not("longitude", "is", null)
     .not("latitude", "is", null)
-    .limit(5000);
+    .limit(1000);
 
+  if (filters.pref) q = q.eq("prefecture_code", filters.pref);
   if (filters.sale_cls) q = q.eq("sale_cls", filters.sale_cls);
   if (filters.status) q = q.eq("status", filters.status);
   if (filters.court) q = q.eq("jp_cases.jp_courts.code", filters.court);
-  if (filters.pref) q = q.eq("prefecture_code", filters.pref);
+  if (filters.case_kind) q = q.eq("jp_cases.case_kind", filters.case_kind);
+  if (filters.price_min != null) q = q.gte("sale_standard_price", filters.price_min);
   if (filters.price_max != null) q = q.lte("sale_standard_price", filters.price_max);
   if (filters.q) {
     if (/[(令和|平成|\(ケ\)|\(ヌ\))]/.test(filters.q)) {
@@ -82,6 +39,8 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
       q = q.ilike("address_text", `%${filters.q}%`);
     }
   }
+  if (filters.yen_10k === "1") q = q.eq("yen_10k_trap", true);
+  if (filters.has_pdf === "1") q = q.eq("detail_result->>has_three_set_pdf", "true");
 
   const { data, error } = await q;
   if (error) {
@@ -125,7 +84,7 @@ export default async function JpMapPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await props.searchParams;
-  const filters = parseFilters(sp);
+  const filters = parseJpFilters(sp);
   const { rows, courts, prefs } = await fetchMapRows(filters);
 
   return (
@@ -143,48 +102,8 @@ export default async function JpMapPage(props: {
         </p>
       </section>
 
-      {/* 필터 */}
-      <Card>
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm">필터</CardTitle>
-        </CardHeader>
-        <CardContent className="pb-4">
-          <form method="get" action="/jp/map" className="grid sm:grid-cols-12 gap-2">
-            <select name="pref" defaultValue={filters.pref ?? ""}
-                    className="sm:col-span-3 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">도도부현 — 전체</option>
-              {prefs.map((p) => (
-                <option key={p.code} value={p.code}>{p.code} {p.name}</option>
-              ))}
-            </select>
-            <select name="court" defaultValue={filters.court ?? ""}
-                    className="sm:col-span-3 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">법원 — 전체</option>
-              {courts.map((c) => (
-                <option key={c.code} value={c.code}>{c.name}</option>
-              ))}
-            </select>
-            <select name="sale_cls" defaultValue={filters.sale_cls ?? ""}
-                    className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">종별 — 전체</option>
-              {SALE_CLS_OPTIONS.map((o) => (
-                <option key={o.code} value={o.code}>{o.label}</option>
-              ))}
-            </select>
-            <select name="status" defaultValue={filters.status ?? ""}
-                    className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-              <option value="">상태 — 전체</option>
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.code} value={o.code}>{o.label}</option>
-              ))}
-            </select>
-            <button type="submit"
-                    className="sm:col-span-2 h-9 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90">
-              적용
-            </button>
-          </form>
-        </CardContent>
-      </Card>
+      {/* 필터 — 목록과 동일한 컴포넌트 */}
+      <JpFilterBar action="/jp/map" filters={filters} prefs={prefs} courts={courts} />
 
       <JpPropertyMap rows={rows} />
     </div>

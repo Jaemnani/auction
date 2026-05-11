@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   const minLat = num("min_lat");
   const maxLng = num("max_lng");
   const maxLat = num("max_lat");
-  const max = Math.min(2000, Math.max(50, num("max") ?? 1000));
+  const max = Math.min(1000, Math.max(50, num("max") ?? 1000));
 
   let bbox: Bbox | undefined;
   if (
