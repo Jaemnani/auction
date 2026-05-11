@@ -4,6 +4,8 @@ import { Barlow, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AreaUnitProvider } from "@/lib/area-unit";
 import { AreaUnitToggle } from "@/components/area-unit-toggle";
+import { CountryToggle } from "@/components/country-toggle";
+import { PrimaryNav } from "@/components/primary-nav";
 
 // aib.vote와 동일한 영문/숫자 폰트 (한글은 Pretendard Variable, globals.css에서 import)
 const barlow = Barlow({
@@ -47,11 +49,9 @@ export default function RootLayout({
               <span className="text-lg font-bold tracking-tight">법원경매</span>
               <span className="text-xs text-muted-foreground hidden sm:inline">무료 검색</span>
             </Link>
-            <nav className="flex items-center gap-1 text-sm">
-              <Link href="/" className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition">목록</Link>
-              <Link href="/map" className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition">지도</Link>
-            </nav>
-            <div className="ml-auto">
+            <PrimaryNav />
+            <div className="ml-auto flex items-center gap-2">
+              <CountryToggle />
               <AreaUnitToggle />
             </div>
           </div>

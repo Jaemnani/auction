@@ -1,0 +1,374 @@
+"""
+jp_ingest.py — BIT(bit.courts.go.jp) → Supabase 적재 CLI.
+
+서브커맨드:
+    search                BIT 검색 → jp_cases + jp_properties upsert
+        --prefecture CODE     도도부현 (예: 13 東京)
+        --block CODE          블록 (자동 추론 — prefecture에서 jp_prefectures로 lookup)
+        --sale-cls 1,2,3,4    용도 필터 (콤마 구분, default: 전체)
+        --max-pages N         페이지 제한 (default: 무제한)
+        --page-size N         페이지 크기 (default: 30, BIT 상한)
+    search-all            모든 도도부현 순회 (--skip CODE,CODE 로 제외 가능)
+        --skip CODE,CODE      제외 도도부현
+        --max-pages N         도도부현당 페이지 상한 (default: 12)
+        --page-size N         페이지 크기 (default: 30)
+    photos                jp_properties 중 사진 미수집인 매물의 search_row.photo_url 다운로드
+        --limit N             (default 50)
+    backfill-details      detail_result IS NULL인 jp_properties 매물 상세 일괄 fetch
+        --prefecture CODE     도도부현 (default: 13 東京)
+        --limit N             (default 100)
+    detail SALE_UNIT_ID COURT_ID  단일 매물 상세 응답 → jp_properties.detail_result
+
+환경변수 (.env):
+    SUPABASE_URL
+    SUPABASE_SERVICE_KEY (권장; 없으면 SUPABASE_KEY anon)
+
+실행:
+    /Users/ohyeahdani_m1/workspace/venv_common/bin/python crawler/scripts/jp_ingest.py search --prefecture 13 --max-pages 2
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:
+    pass
+
+SRC = Path(__file__).resolve().parent.parent / "src"
+sys.path.insert(0, str(SRC))
+
+from bit import BitClient, BitClientConfig, BitStore, BitTransientError  # noqa: E402
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("jp_ingest")
+
+
+# 도도부현 → 블록 매핑 (jp_prefectures 시드와 동일 — DB lookup 회피용)
+PREFECTURE_BLOCK = {
+    # 北海道 지점 (01)
+    "91": "01", "92": "01", "93": "01", "94": "01",
+    # 東北 (02-07)
+    "02": "02", "03": "02", "04": "02", "05": "02", "06": "02", "07": "02",
+    # 関東 (08-14)
+    "08": "03", "09": "03", "10": "03", "11": "03", "12": "03", "13": "03", "14": "03",
+    # 北陸甲信越 (15-20)
+    "15": "04", "16": "04", "17": "04", "18": "04", "19": "04", "20": "04",
+    # 東海 (21-24)
+    "21": "05", "22": "05", "23": "05", "24": "05",
+    # 近畿 (25-30)
+    "25": "06", "26": "06", "27": "06", "28": "06", "29": "06", "30": "06",
+    # 中国 (31-35)
+    "31": "07", "32": "07", "33": "07", "34": "07", "35": "07",
+    # 四国 (36-39)
+    "36": "08", "37": "08", "38": "08", "39": "08",
+    # 九州沖縄 (40-47)
+    "40": "09", "41": "09", "42": "09", "43": "09", "44": "09",
+    "45": "09", "46": "09", "47": "09",
+}
+
+
+# ---------- search ----------
+
+async def cmd_search(args: argparse.Namespace) -> None:
+    pref = args.prefecture
+    block = args.block or PREFECTURE_BLOCK.get(pref)
+    if not block:
+        raise SystemExit(f"unknown prefecture {pref!r} — use --block to override")
+
+    sale_cls = (
+        [s.strip() for s in args.sale_cls.split(",") if s.strip()]
+        if args.sale_cls else None
+    )
+
+    store = BitStore()
+    cfg = BitClientConfig()
+
+    n_cards = 0
+    n_pages = 0
+    async with BitClient(cfg) as c:
+        page = 1
+        total: int | None = None
+        seen = 0
+        while True:
+            try:
+                result = await c.search(
+                    prefecture_id=pref,
+                    block_cls=block,
+                    sale_cls=sale_cls,
+                    page=page,
+                    page_size=args.page_size,
+                )
+            except BitTransientError as e:
+                # 페이지 범위 초과 시 BIT는 HTTP 500 — graceful stop
+                logger.info("page %d aborted (%s) — assume end", page, e)
+                break
+            if total is None:
+                total = result.get("total", 0)
+                logger.info("BIT total=%d for prefecture=%s", total, pref)
+            cards = result.get("properties") or []
+            if not cards:
+                logger.info("page %d empty — stop", page)
+                break
+
+            n = store.upsert_search_cards(cards, prefecture_code=pref)
+            n_cards += n
+            n_pages += 1
+            seen += len(cards)
+            logger.info(
+                "page %d: cards=%d upserted=%d (total seen=%d/%d)",
+                page, len(cards), n, seen, total,
+            )
+
+            if args.max_pages and n_pages >= args.max_pages:
+                logger.info("max-pages %d reached — stop", args.max_pages)
+                break
+            if total and seen >= total:
+                logger.info("seen all %d — stop", total)
+                break
+            page += 1
+            if page > 100:
+                logger.warning("safety stop at page 100")
+                break
+
+    print(f"DONE: {n_pages} pages, {n_cards} cards upserted (prefecture={pref}, block={block})")
+
+
+# ---------- search-all (47도도부현 순회) ----------
+
+async def cmd_search_all(args: argparse.Namespace) -> None:
+    skip = set((args.skip or "").replace(" ", "").split(",")) - {""}
+    prefs = [p for p in PREFECTURE_BLOCK.keys() if p not in skip]
+    sale_cls = (
+        [s.strip() for s in args.sale_cls.split(",") if s.strip()]
+        if args.sale_cls else None
+    )
+
+    store = BitStore()
+    cfg = BitClientConfig()
+    grand_total = 0
+    pref_results: list[tuple[str, int]] = []
+
+    for pref in prefs:
+        block = PREFECTURE_BLOCK[pref]
+        pref_cards = 0
+        try:
+            # 도도부현마다 새 client (세션 컨텍스트 격리 — IP block 회복도 깨끗)
+            async with BitClient(cfg) as c:
+                page = 1
+                total: int | None = None
+                seen = 0
+                while True:
+                    try:
+                        result = await c.search(
+                            prefecture_id=pref, block_cls=block,
+                            sale_cls=sale_cls,
+                            page=page, page_size=args.page_size,
+                        )
+                    except BitTransientError as e:
+                        logger.info("pref=%s page %d aborted (%s) — end", pref, page, e)
+                        break
+                    if total is None:
+                        total = result.get("total", 0)
+                    cards = result.get("properties") or []
+                    if not cards:
+                        break
+                    n = store.upsert_search_cards(cards, prefecture_code=pref)
+                    pref_cards += n
+                    seen += len(cards)
+                    logger.info(
+                        "pref=%s page %d: upserted=%d (seen=%d/%d)",
+                        pref, page, n, seen, total or 0,
+                    )
+                    if args.max_pages and page >= args.max_pages:
+                        break
+                    if total and seen >= total:
+                        break
+                    page += 1
+                    if page > 100:
+                        break
+        except Exception as e:
+            logger.warning("pref=%s failed: %s", pref, e)
+        pref_results.append((pref, pref_cards))
+        grand_total += pref_cards
+        logger.info("pref=%s DONE %d cards (grand total=%d)", pref, pref_cards, grand_total)
+
+    print("===== search-all summary =====")
+    for pref, n in pref_results:
+        if n > 0:
+            print(f"  {pref}: {n}")
+    print(f"TOTAL: {grand_total} cards across {len(prefs)} prefectures")
+
+
+# ---------- photos ----------
+
+async def cmd_photos(args: argparse.Namespace) -> None:
+    store = BitStore()
+    sel = (
+        store.sb.table("jp_properties")
+        .select("sale_unit_id,search_row")
+        .limit(args.limit)
+        .execute()
+    )
+    rows = sel.data or []
+    if not rows:
+        print("no jp_properties rows")
+        return
+
+    n_ok = 0
+    for row in rows:
+        sale_unit_id = row["sale_unit_id"]
+        sr = row.get("search_row") or {}
+        photo_url = sr.get("photo_url") if isinstance(sr, dict) else None
+        if not photo_url:
+            continue
+        seq = (sr.get("photo_meta") or {}).get("seq") or 1
+        rec = store.upload_photo_from_url(sale_unit_id, seq, photo_url)
+        if rec:
+            n_ok += 1
+            logger.info("photo ok: %s seq=%d", sale_unit_id, seq)
+    print(f"DONE: {n_ok} photos uploaded")
+
+
+# ---------- backfill-details ----------
+
+async def cmd_backfill_details(args: argparse.Namespace) -> None:
+    pref = args.prefecture
+    block = args.block or PREFECTURE_BLOCK.get(pref)
+    if not block:
+        raise SystemExit(f"unknown prefecture {pref!r}")
+
+    store = BitStore()
+    base = (
+        store.sb.table("jp_properties")
+        .select("sale_unit_id,search_row")
+        .eq("prefecture_code", pref)
+    )
+    if args.force:
+        # 전체 재처리 (좌표·新 필드 추가 시)
+        sel = base.limit(args.limit).execute()
+    else:
+        # 미수집만 (latitude NULL인 것을 트리거 — detail에서 좌표 추출됨)
+        sel = base.is_("latitude", "null").limit(args.limit).execute()
+    rows = sel.data or []
+    if not rows:
+        print("no jp_properties with NULL detail_result")
+        return
+
+    logger.info("backfilling %d details (prefecture=%s)", len(rows), pref)
+    cfg = BitClientConfig()
+    n_ok = 0
+    n_fail = 0
+    async with BitClient(cfg) as c:
+        for i, row in enumerate(rows):
+            sale_unit_id = row["sale_unit_id"]
+            sr = row.get("search_row") or {}
+            court_id = sr.get("court_id") if isinstance(sr, dict) else None
+            if not court_id:
+                logger.warning("skip %s — no court_id in search_row", sale_unit_id)
+                n_fail += 1
+                continue
+            try:
+                d = await c.get_detail(
+                    sale_unit_id=sale_unit_id,
+                    court_id=court_id,
+                    prefecture_id=pref,
+                    block_cls=block,
+                    warmup=(i == 0),  # 첫 회만 세션 워밍업
+                )
+                # html은 너무 크므로 detail_result에는 parsed만 저장
+                store.upsert_detail(sale_unit_id, d.get("parsed") or {})
+                n_ok += 1
+                logger.info(
+                    "  ok %s court=%s photos=%d",
+                    sale_unit_id, court_id,
+                    len((d.get("parsed") or {}).get("photos") or []),
+                )
+            except Exception as e:
+                logger.warning("  fail %s: %s", sale_unit_id, e)
+                n_fail += 1
+
+    print(f"DONE: {n_ok} ok / {n_fail} fail")
+
+
+# ---------- detail ----------
+
+async def cmd_detail(args: argparse.Namespace) -> None:
+    pref = args.prefecture
+    block = args.block or PREFECTURE_BLOCK.get(pref)
+    if not block:
+        raise SystemExit(f"unknown prefecture {pref!r}")
+    store = BitStore()
+    cfg = BitClientConfig()
+    async with BitClient(cfg) as c:
+        d = await c.get_detail(
+            sale_unit_id=args.sale_unit_id,
+            court_id=args.court_id,
+            prefecture_id=pref,
+            block_cls=block,
+        )
+    if args.save_html:
+        Path(args.save_html).write_text(d["html"], encoding="utf-8")
+        print(f"  saved: {args.save_html} ({len(d['html'])} bytes)")
+    store.upsert_detail(args.sale_unit_id, d)
+    print(f"DONE: detail upsert for {args.sale_unit_id}")
+    print("  title:", (d.get("parsed") or {}).get("title"))
+
+
+# ---------- main ----------
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="jp_ingest")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("search")
+    s.add_argument("--prefecture", required=True, help="JIS code (e.g. 13)")
+    s.add_argument("--block", help="block code (auto if omitted)")
+    s.add_argument("--sale-cls", help="comma-separated, e.g. 1,2,3")
+    s.add_argument("--max-pages", type=int, default=None)
+    s.add_argument("--page-size", type=int, default=30)
+    s.set_defaults(fn=cmd_search)
+
+    s = sub.add_parser("search-all")
+    s.add_argument("--skip", help="comma-separated prefecture codes to skip")
+    s.add_argument("--sale-cls", help="comma-separated, e.g. 1,2,3")
+    s.add_argument("--max-pages", type=int, default=12)
+    s.add_argument("--page-size", type=int, default=30)
+    s.set_defaults(fn=cmd_search_all)
+
+    s = sub.add_parser("photos")
+    s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(fn=cmd_photos)
+
+    s = sub.add_parser("backfill-details")
+    s.add_argument("--prefecture", default="13")
+    s.add_argument("--block", help="auto if omitted")
+    s.add_argument("--limit", type=int, default=100)
+    s.add_argument("--force", action="store_true", help="re-fetch all (default: latitude NULL only)")
+    s.set_defaults(fn=cmd_backfill_details)
+
+    s = sub.add_parser("detail")
+    s.add_argument("sale_unit_id")
+    s.add_argument("court_id")
+    s.add_argument("--prefecture", required=True)
+    s.add_argument("--block", help="auto if omitted")
+    s.add_argument("--save-html", help="save raw HTML to path")
+    s.set_defaults(fn=cmd_detail)
+
+    args = p.parse_args()
+    asyncio.run(args.fn(args))
+
+
+if __name__ == "__main__":
+    main()

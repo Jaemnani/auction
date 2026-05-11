@@ -189,6 +189,15 @@ auction-photos bucket                        MapLibre + 외부 API
 - 매각결과검색 endpoint `/pgj/pgjsearch/selectDspslSchdRsltSrch.on` (PGJ158M02 W2X 분석으로 발굴)
 - WebSquare RIA 패턴: `dma_*` nested JSON, 인증/세션 불필요, UA + Referer만 권장
 
+## 🇯🇵 일본 확장 로드맵 (Coming Soon)
+
+같은 코드베이스로 일본 BIT(`bit.courts.go.jp`) 매물 지원 예정. 한·일 경매제도가 거의 같은 구조라 *현지화 수준*의 작업으로 가능합니다.
+
+- 분석: [docs/jp_market_analysis.md](docs/jp_market_analysis.md)
+- 라이브: 헤더 [한국 | 日本] 토글로 전환 가능. 현재 `/jp`는 비교표·로드맵·BIT 정찰 체크리스트 노출
+- 핵심 차이: 자동 유찰 차감 없음 / 三点セット PDF / 1만엔 함정 매물 / 빈집률 결합
+- 차별화 후보: 삼점세트 LLM 요약 (한국판보다 가치 ↑), 외국인 투자자 모드, 평가 변경 이력 추적
+
 ## 확인된 사실 (2026-05-04 기준)
 
 - courtauction.go.kr: 인증/세션 불필요 JSON API (WebSquare RIA)
