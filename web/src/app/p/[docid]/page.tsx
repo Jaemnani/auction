@@ -14,6 +14,8 @@ import {
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
 import { AreaText } from "@/components/area-text";
+import { ExportButtons } from "@/components/export-buttons";
+import { buildKrMarkdown } from "@/lib/kr-markdown";
 
 export const dynamic = "force-dynamic";
 
@@ -67,16 +69,23 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
   const dept = cs?.jdbn_name ?? "";
   const courtPlusDept = [courtName, dept].filter(Boolean).join(" · ");
 
+  // Markdown export
+  const markdown = buildKrMarkdown(p, names, photos.map((ph) => ph.url));
+  const mdFilename = `auction_${(cs?.case_no ?? p.docid ?? "kr")
+    .replace(/[^\w\-]+/g, "_")
+    .slice(0, 80)}`;
+
   return (
     <div className="space-y-6">
       {/* 헤더 */}
-      <div>
-        <div className="text-sm text-muted-foreground">
-          {courtPlusDept || "-"}
-        </div>
-        <h1 className="text-2xl font-bold">
-          {cs?.case_no} {p.maemul_ser > 1 && <span className="text-muted-foreground">#{p.maemul_ser}</span>}
-        </h1>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-muted-foreground">
+            {courtPlusDept || "-"}
+          </div>
+          <h1 className="text-2xl font-bold">
+            {cs?.case_no} {p.maemul_ser > 1 && <span className="text-muted-foreground">#{p.maemul_ser}</span>}
+          </h1>
         <div className="mt-1 text-sm">
           {p.road_addr ? (
             <span className="font-medium">{p.road_addr}</span>
@@ -90,6 +99,8 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         {p.road_addr && p.lot_addr && p.lot_addr !== p.road_addr && (
           <div className="text-xs text-muted-foreground mt-0.5">지번 {p.lot_addr}</div>
         )}
+        </div>
+        <ExportButtons markdown={markdown} filename={mdFilename} />
       </div>
 
       {/* 권리분석 요약 카드 — 입찰 전 필독 */}

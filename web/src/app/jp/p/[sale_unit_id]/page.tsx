@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase, publicStorageUrl, JP_PHOTO_BUCKET } from "@/lib/supabase";
+import { ExportButtons } from "@/components/export-buttons";
+import { buildJpMarkdown } from "@/lib/jp-markdown";
 
 export const revalidate = 300;
 
@@ -141,12 +143,40 @@ export default async function JpDetailPage({
     ? `https://www.openstreetmap.org/export/embed.html?bbox=${(lng ?? 0) - 0.005},${(lat ?? 0) - 0.003},${(lng ?? 0) + 0.005},${(lat ?? 0) + 0.003}&layer=mapnik&marker=${lat},${lng}`
     : null;
 
+  // Markdown export
+  const markdown = buildJpMarkdown({
+    sale_unit_id: row.sale_unit_id,
+    sale_cls_label: row.sale_cls_label,
+    status: row.status,
+    yen_10k_trap: row.yen_10k_trap,
+    address_text: row.address_text,
+    transit_info: row.transit_info,
+    sale_standard_price: row.sale_standard_price,
+    bid_deposit: row.bid_deposit,
+    purchase_possible_price: row.purchase_possible_price,
+    latitude: lat,
+    longitude: lng,
+    case_no: row.jp_cases?.case_no ?? null,
+    case_kind: row.jp_cases?.case_kind ?? null,
+    court_code: row.jp_cases?.jp_courts?.code ?? null,
+    court_name: courtName,
+    detail_prices: detail.prices,
+    detail_dates: detail.dates,
+    detail_properties: detail.properties ?? null,
+    has_three_set_pdf: !!detail.has_three_set_pdf,
+    photo_urls: photoUrls,
+  });
+  const mdFilename = `bit_${(row.jp_cases?.case_no ?? row.sale_unit_id)
+    .replace(/[^\w\-]+/g, "_")
+    .slice(0, 80)}`;
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="text-xs">
+      <div className="flex items-center justify-between text-xs">
         <Link href="/jp" className="text-muted-foreground hover:text-primary hover:underline">
           ← 일본 매물 목록
         </Link>
+        <ExportButtons markdown={markdown} filename={mdFilename} />
       </div>
 
       {/* 헤더 */}
