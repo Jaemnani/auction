@@ -101,25 +101,25 @@ echo "python:      $PYTHON"
 echo "prefectures: $PREFECTURES"
 echo "budget:      ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분)"
 
-# 1) 각 도도부현 검색
-IFS=',' read -ra PREF_ARR <<< "$PREFECTURES"
-for pref in "${PREF_ARR[@]}"; do
-  pref="${pref// /}"
-  [ -z "$pref" ] && continue
-  step "search pref=$pref" crawler/scripts/jp_ingest.py search \
-    --prefecture "$pref" --page-size "$PAGE_SIZE" --max-pages "$MAX_PAGES"
-done
+# run 시작 timestamp — 종결 매물(BIT 검색에서 사라진 매물) 자동 close용 기준
+RUN_SINCE_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+echo "since:       $RUN_SINCE_ISO (이 시각 이전 fetched_at 매물은 close-aged 대상)"
 
-# 2) 좌표 backfill (latitude NULL인 매물 → detail fetch). drain 루프로 모두 처리.
-for pref in "${PREF_ARR[@]}"; do
-  pref="${pref// /}"
-  [ -z "$pref" ] && continue
-  drain "backfill-details pref=$pref" crawler/scripts/jp_ingest.py backfill-details \
-    --prefecture "$pref" --limit "$DETAIL_LIMIT"
-done
+# 1) 전국 도도부현 search — 단일 process로 cookie 컨텍스트 격리.
+#    upsert_search_card에서 fetched_at 갱신 → 살아있는 매물 표시.
+step "search-all" crawler/scripts/jp_ingest.py search-all \
+  --max-pages "$MAX_PAGES" --page-size "$PAGE_SIZE"
+
+# 2) 좌표 + 가격·매각기일 backfill — latitude NULL 또는 가격 변경 감지용.
+#    upsert_detail에서 가격 변경 시 jp_valuation_history 자동 기록.
+drain "backfill-details-all" crawler/scripts/jp_ingest.py backfill-details-all \
+  --limit "$DETAIL_LIMIT"
 
 # 3) 사진 적재 (jp-auction-photos 버킷 + 썸네일)
 drain "photos" crawler/scripts/jp_ingest.py photos --limit "$PHOTO_LIMIT"
+
+# 4) 종결 매물 마킹 — BIT 검색에서 사라진 매물(낙찰/절차 정지)을 closed로 변경
+step "close-aged" crawler/scripts/jp_ingest.py close-aged --since "$RUN_SINCE_ISO"
 
 # 4) 30일 지난 로그 정리
 find "$LOG_DIR" -name 'jp_daily_*.log' -mtime +30 -delete 2>/dev/null || true

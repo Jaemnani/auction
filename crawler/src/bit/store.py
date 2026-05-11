@@ -16,6 +16,7 @@ import io
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import httpx
@@ -242,6 +243,8 @@ class BitStore:
             "transit_info": card.get("transit_info"),
             "yen_10k_trap": yen_10k_trap,
             "search_row": card,
+            # search 결과에 등장 → 살아있는 매물. 갱신 후 close-aged에서 활용.
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
         self.sb.table("jp_properties").upsert(
@@ -287,23 +290,106 @@ class BitStore:
         """상세 응답 jp_properties 갱신.
 
         detail_result jsonb에 통째 + 좌표·3종 가격은 컬럼에도 별도 저장.
-        - longitude/latitude → 지도 인덱스(GIST)에 활용
-        - purchase_possible_price (買受可能価額) — 검색 카드엔 없음, 상세에서만
+        가격이 직전과 다르면 jp_valuation_history에 변경 이력 기록 (일본 평가 재조정 추적).
         """
+        prices = detail.get("prices") or {}
+        new_std = prices.get("sale_standard_price") if isinstance(prices, dict) else None
+        new_ppp = prices.get("purchase_possible_price") if isinstance(prices, dict) else None
+
+        # 변경 감지 — 직전 값 조회
+        prev = (
+            self.sb.table("jp_properties")
+            .select("id, sale_standard_price, purchase_possible_price")
+            .eq("sale_unit_id", sale_unit_id)
+            .maybeSingle()
+            .execute()
+        )
+        prev_data = prev.data or {}
+        property_id = prev_data.get("id")
+        prev_std = prev_data.get("sale_standard_price")
+        prev_ppp = prev_data.get("purchase_possible_price")
+
+        def _num(v: Any) -> int | None:
+            if isinstance(v, (int, float)):
+                return int(v)
+            if isinstance(v, str):
+                try:
+                    return int(v.replace(",", ""))
+                except ValueError:
+                    return None
+            return None
+
+        prev_std_n = _num(prev_std)
+        prev_ppp_n = _num(prev_ppp)
+        new_std_n = _num(new_std)
+        new_ppp_n = _num(new_ppp)
+
+        # 변경 시 history 기록 (최초 적재 시 prev=None이면 skip — 시작점은 history 불요)
+        if property_id and (
+            (prev_std_n is not None and new_std_n is not None and prev_std_n != new_std_n)
+            or (prev_ppp_n is not None and new_ppp_n is not None and prev_ppp_n != new_ppp_n)
+        ):
+            try:
+                self.sb.table("jp_valuation_history").insert([{
+                    "property_id": property_id,
+                    "valued_at": datetime.now(timezone.utc).date().isoformat(),
+                    "sale_standard_price": new_std_n,
+                    "purchase_possible_price": new_ppp_n,
+                    "reason": "BIT detail re-fetch 시 변경 감지",
+                    "raw": {
+                        "prev": {"sale_standard_price": prev_std_n,
+                                 "purchase_possible_price": prev_ppp_n},
+                        "new": {"sale_standard_price": new_std_n,
+                                "purchase_possible_price": new_ppp_n},
+                    },
+                }]).execute()
+                logger.info(
+                    "valuation change %s: std %s→%s / ppp %s→%s",
+                    sale_unit_id, prev_std_n, new_std_n, prev_ppp_n, new_ppp_n,
+                )
+            except Exception as e:
+                logger.warning("valuation_history insert failed for %s: %s",
+                               sale_unit_id, e)
+
         update: dict[str, Any] = {"detail_result": detail}
         lat = detail.get("latitude")
         lng = detail.get("longitude")
         if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
             update["latitude"] = lat
             update["longitude"] = lng
-        prices = detail.get("prices") or {}
-        if isinstance(prices, dict):
-            ppp = prices.get("purchase_possible_price")
-            if isinstance(ppp, (int, float)):
-                update["purchase_possible_price"] = ppp
+        if new_ppp_n is not None:
+            update["purchase_possible_price"] = new_ppp_n
+        if new_std_n is not None:
+            update["sale_standard_price"] = new_std_n
+
         self.sb.table("jp_properties").update(update).eq(
             "sale_unit_id", sale_unit_id,
         ).execute()
+
+    # ---------- close-aged ----------
+
+    def close_aged(self, since_iso: str) -> int:
+        """fetched_at < since_iso 이고 status가 종결 아닌 매물을 'closed' 마킹.
+
+        매일 search-all 시작 시점을 since_iso로 받아 — 이번 갱신에서 등장 안 한 매물은
+        BIT에서 사라진 것 → 낙찰 완료/절차 정지로 추정.
+        """
+        sel = (
+            self.sb.table("jp_properties")
+            .select("id, sale_unit_id, status, fetched_at")
+            .lt("fetched_at", since_iso)
+            .not_.in_("status", ["closed", "aborted"])
+            .execute()
+        )
+        rows = sel.data or []
+        if not rows:
+            return 0
+        ids = [r["id"] for r in rows]
+        self.sb.table("jp_properties").update({"status": "closed"}).in_(
+            "id", ids,
+        ).execute()
+        logger.info("closed %d aged properties (fetched_at < %s)", len(ids), since_iso)
+        return len(ids)
 
     # ---------- photos ----------
 

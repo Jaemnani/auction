@@ -302,6 +302,92 @@ async def cmd_backfill_details(args: argparse.Namespace) -> None:
     print(f"DONE: {n_ok} ok / {n_fail} fail")
 
 
+# ---------- close-aged ----------
+
+async def cmd_close_aged(args: argparse.Namespace) -> None:
+    """fetched_at < SINCE_ISO인 매물을 closed 마킹.
+
+    SINCE는 ISO datetime. 보통 daily script가 search-all 시작 timestamp를 전달.
+    """
+    store = BitStore()
+    n = store.close_aged(args.since)
+    print(f"DONE: {n} properties closed (fetched_at < {args.since})")
+
+
+# ---------- backfill-details-all (모든 도도부현 단일 프로세스 백필) ----------
+
+async def cmd_backfill_details_all(args: argparse.Namespace) -> None:
+    """모든 도도부현에 걸쳐 latitude NULL인 매물을 단일 BitClient로 backfill.
+
+    shell loop로 도도부현마다 process를 띄우면 매번 warmup이 필요해 느린데,
+    이 명령은 도도부현마다 첫 매물만 warmup=True, 이후는 False로 가속.
+    """
+    store = BitStore()
+    base = (
+        store.sb.table("jp_properties")
+        .select("sale_unit_id,search_row,prefecture_code")
+    )
+    if args.force:
+        sel = base.limit(args.limit).execute()
+    else:
+        sel = base.is_("latitude", "null").limit(args.limit).execute()
+    rows = sel.data or []
+    if not rows:
+        print("no jp_properties with NULL latitude")
+        return
+
+    # 도도부현별 group
+    by_pref: dict[str, list[dict]] = {}
+    for r in rows:
+        p = r.get("prefecture_code")
+        if not p:
+            continue
+        by_pref.setdefault(p, []).append(r)
+
+    logger.info("backfilling %d details across %d prefectures",
+                len(rows), len(by_pref))
+
+    cfg = BitClientConfig()
+    n_ok = 0
+    n_fail = 0
+
+    for pref, pref_rows in by_pref.items():
+        block = PREFECTURE_BLOCK.get(pref)
+        if not block:
+            logger.warning("skip pref=%s — unknown block", pref)
+            n_fail += len(pref_rows)
+            continue
+        logger.info("=== pref=%s (%d rows) ===", pref, len(pref_rows))
+        try:
+            async with BitClient(cfg) as c:
+                for i, row in enumerate(pref_rows):
+                    sale_unit_id = row["sale_unit_id"]
+                    sr = row.get("search_row") or {}
+                    court_id = sr.get("court_id") if isinstance(sr, dict) else None
+                    if not court_id:
+                        n_fail += 1
+                        continue
+                    try:
+                        d = await c.get_detail(
+                            sale_unit_id=sale_unit_id,
+                            court_id=court_id,
+                            prefecture_id=pref,
+                            block_cls=block,
+                            warmup=(i == 0),
+                        )
+                        store.upsert_detail(sale_unit_id, d.get("parsed") or {})
+                        n_ok += 1
+                        if n_ok % 20 == 0:
+                            logger.info("  progress: %d ok / %d fail", n_ok, n_fail)
+                    except Exception as e:
+                        logger.warning("  fail %s: %s", sale_unit_id, e)
+                        n_fail += 1
+        except Exception as e:
+            logger.warning("pref=%s client error: %s", pref, e)
+
+    print(f"DONE: {n_ok} ok / {n_fail} fail")
+
+
 # ---------- detail ----------
 
 async def cmd_detail(args: argparse.Namespace) -> None:
@@ -350,6 +436,15 @@ def main() -> None:
     s = sub.add_parser("photos")
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(fn=cmd_photos)
+
+    s = sub.add_parser("close-aged")
+    s.add_argument("--since", required=True, help="ISO datetime (e.g. 2026-05-11T05:30:00Z)")
+    s.set_defaults(fn=cmd_close_aged)
+
+    s = sub.add_parser("backfill-details-all")
+    s.add_argument("--limit", type=int, default=2000)
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_backfill_details_all)
 
     s = sub.add_parser("backfill-details")
     s.add_argument("--prefecture", default="13")

@@ -9,7 +9,7 @@ export const metadata = {
   description: "BIT 매물 위치 지도 (좌표 있는 매물만)",
 };
 
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 type JpFilters = {
   sale_cls: string | null;
