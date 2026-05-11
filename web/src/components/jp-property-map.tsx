@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import maplibregl, { Map as MlMap, Marker, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 const JAPAN_BOUNDS: [[number, number], [number, number]] = [
-  [122.0, 24.0],   // 沖縄 남서
-  [153.0, 46.0],   // 北海道 북동
+  [122.0, 24.0],
+  [153.0, 46.0],
 ];
-const JAPAN_CENTER: [number, number] = [138.0, 36.5];   // 본토 중앙 근처
+const JAPAN_CENTER: [number, number] = [138.0, 36.5];
 const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 export type JpMapRow = {
@@ -31,17 +31,50 @@ function fmtJpy(v: number | null | undefined): string {
   return v.toLocaleString("ja-JP") + "円";
 }
 
+/** Haversine distance in meters between two lng/lat. */
+function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+type CircleSel = {
+  centerLng: number;
+  centerLat: number;
+  radiusM: number;
+} | null;
+
 export function JpPropertyMap({ rows }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
 
+  // 원형 선택 상태
+  const [drawMode, setDrawMode] = useState(false);
+  const [circle, setCircle] = useState<CircleSel>(null);
+  // 현재 드래그 중인 임시 원 (px 좌표) — SVG 미리보기용
+  const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+
+  // 원 안 매물만 (drawMode + circle 있을 때)
+  const filteredRows = useMemo(() => {
+    if (!circle) return rows;
+    return rows.filter(
+      (r) => distanceM(circle.centerLng, circle.centerLat, r.longitude, r.latitude) <= circle.radiusM,
+    );
+  }, [rows, circle]);
+
   const pointsKey = useMemo(
-    () => rows.map((r) => r.sale_unit_id).join(","),
-    [rows],
+    () => filteredRows.map((r) => r.sale_unit_id).join(","),
+    [filteredRows],
   );
 
-  // map 인스턴스 1회 생성 (한국 PropertyMap 패턴 차용)
+  // map 인스턴스 1회 생성
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
@@ -55,10 +88,7 @@ export function JpPropertyMap({ rows }: Props) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
-
-    // 컨테이너 사이즈가 hydration 직후 0일 수 있어 명시 resize
     map.once("load", () => map.resize());
-
     mapRef.current = map;
     return () => {
       map.remove();
@@ -67,18 +97,32 @@ export function JpPropertyMap({ rows }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 마커 렌더 (rows 변경 시 갱신)
+  // drawMode 변경 시 maplibre dragPan / scrollZoom 토글
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (drawMode) {
+      map.dragPan.disable();
+      map.boxZoom.disable();
+      map.dragRotate.disable();
+    } else {
+      map.dragPan.enable();
+      map.boxZoom.enable();
+      map.dragRotate.enable();
+    }
+  }, [drawMode]);
+
+  // 마커 렌더 — filteredRows 기준
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // clear
     for (const m of markersRef.current) m.remove();
     markersRef.current = [];
 
-    if (rows.length === 0) return;
+    if (filteredRows.length === 0) return;
 
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const popupHtml = `
         <div style="font-size:12px;min-width:200px">
           <div style="font-family:monospace;color:#71717a;font-size:11px">${r.case_no ?? r.sale_unit_id}</div>
@@ -91,9 +135,6 @@ export function JpPropertyMap({ rows }: Props) {
           <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>
         </div>
       `;
-
-      // 한국 PropertyMap과 동일: MapLibre 기본 SVG 핀.
-      // 색상은 더 짙은 주황 (orange-700 = #c2410c)으로 일본 시각 구분.
       const marker = new maplibregl.Marker({ color: "#c2410c" })
         .setLngLat([r.longitude, r.latitude])
         .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "300px" }).setHTML(popupHtml))
@@ -101,21 +142,126 @@ export function JpPropertyMap({ rows }: Props) {
       markersRef.current.push(marker);
     }
 
-    // 마커 모두 들어오게 fit (1개면 zoom 14)
-    if (rows.length === 1) {
-      map.flyTo({ center: [rows[0].longitude, rows[0].latitude], zoom: 14 });
-    } else {
+    // 원 안 마커가 있고 사용자가 그린 직후라면 fit
+    if (circle && filteredRows.length > 0) {
       const bounds = new maplibregl.LngLatBounds();
-      for (const r of rows) bounds.extend([r.longitude, r.latitude]);
-      map.fitBounds(bounds, { padding: 40, maxZoom: 13, duration: 600 });
+      for (const r of filteredRows) bounds.extend([r.longitude, r.latitude]);
+      map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 600 });
     }
-  }, [pointsKey, rows]);
+  }, [pointsKey, filteredRows, circle]);
+
+  // 오버레이 마우스 이벤트 — drawMode 시에만 활성
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!drawMode) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setDrawing({ x0: x, y0: y, x1: x, y1: y });
+    setCircle(null);  // 새 원 시작 시 이전 원 클리어
+  }, [drawMode]);
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!drawing) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setDrawing({
+      x0: drawing.x0,
+      y0: drawing.y0,
+      x1: e.clientX - rect.left,
+      y1: e.clientY - rect.top,
+    });
+  }, [drawing]);
+
+  const onMouseUp = useCallback((e: React.MouseEvent) => {
+    if (!drawing || !mapRef.current) return;
+    const map = mapRef.current;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x1 = e.clientX - rect.left;
+    const y1 = e.clientY - rect.top;
+    // px → lng/lat 변환
+    const center = map.unproject([drawing.x0, drawing.y0]);
+    const edge = map.unproject([x1, y1]);
+    const radiusM = distanceM(center.lng, center.lat, edge.lng, edge.lat);
+    setDrawing(null);
+    if (radiusM > 50) {  // 너무 작으면 무시 (실수 클릭)
+      setCircle({
+        centerLng: center.lng,
+        centerLat: center.lat,
+        radiusM,
+      });
+    } else {
+      setCircle(null);
+    }
+    // 그린 후 즉시 drawMode 해제 (재드래그하려면 다시 토글)
+    setDrawMode(false);
+  }, [drawing]);
+
+  // 임시 원 SVG (드래그 중) — px 좌표 기준
+  const drawingPxRadius = drawing
+    ? Math.hypot(drawing.x1 - drawing.x0, drawing.y1 - drawing.y0)
+    : 0;
 
   return (
     <div className="relative h-[70vh] min-h-[500px] rounded-lg border overflow-hidden">
       <div ref={containerRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-      <div className="absolute top-2 left-2 rounded-md bg-card/95 backdrop-blur px-3 py-1.5 text-xs border shadow z-10">
-        🇯🇵 좌표 매물 <strong>{rows.length}</strong>건
+
+      {/* 마우스 이벤트 오버레이 — drawMode에서만 pointer-events 활성 */}
+      <div
+        className="absolute inset-0 z-20"
+        style={{
+          cursor: drawMode ? "crosshair" : "auto",
+          pointerEvents: drawMode ? "auto" : "none",
+        }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+      >
+        {drawing && (
+          <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: "none" }}>
+            <circle
+              cx={drawing.x0}
+              cy={drawing.y0}
+              r={drawingPxRadius}
+              fill="rgba(194, 65, 12, 0.15)"
+              stroke="#c2410c"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+            />
+          </svg>
+        )}
+      </div>
+
+      {/* 컨트롤 오버레이 */}
+      <div className="absolute top-2 left-2 flex items-center gap-2 z-30">
+        <div className="rounded-md bg-card/95 backdrop-blur px-3 py-1.5 text-xs border shadow">
+          🇯🇵 매물 <strong>{filteredRows.length}</strong>건
+          {circle && (
+            <span className="text-muted-foreground ml-1">
+              / 전체 {rows.length}건 (반경 {(circle.radiusM / 1000).toFixed(1)}km)
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (circle) {
+              setCircle(null);
+              setDrawMode(false);
+            } else {
+              setDrawMode((m) => !m);
+            }
+          }}
+          className={
+            "rounded-md px-3 py-1.5 text-xs border shadow font-medium " +
+            (drawMode
+              ? "bg-orange-600 text-white border-orange-600"
+              : circle
+                ? "bg-muted text-foreground border-border hover:bg-muted/80"
+                : "bg-card text-foreground border-border hover:bg-muted")
+          }
+        >
+          {drawMode ? "📍 드래그하여 원 그리기" : circle ? "✕ 원형 선택 해제" : "⭕ 원형 영역 선택"}
+        </button>
       </div>
     </div>
   );

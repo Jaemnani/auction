@@ -1,12 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import maplibregl, { LngLatBoundsLike, Map as MlMap, Marker, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Property } from "@/lib/types";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
 import { convertAreaText, useAreaUnit } from "@/lib/area-unit";
+
+/** Haversine distance in meters. */
+function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+type CircleSel = { centerLng: number; centerLat: number; radiusM: number } | null;
 
 const KOREA_BOUNDS: [[number, number], [number, number]] = [
   [124.5, 33.0],
@@ -33,6 +48,10 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
   const [autoMode, setAutoMode] = useState(autoRefresh);
   const [showRefreshBtn, setShowRefreshBtn] = useState(false);
   const [count, setCount] = useState<number>(initialRows.length);
+  // 원형 영역 선택
+  const [drawMode, setDrawMode] = useState(false);
+  const [circle, setCircle] = useState<CircleSel>(null);
+  const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   // initialRows가 props로 갱신되면 (필터 변경 시) 동기화
   useEffect(() => {
@@ -42,13 +61,24 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
   }, [initialRows]);
 
   const points = useMemo(
-    () => rows.filter((r) => r.longitude != null && r.latitude != null),
-    [rows],
+    () => {
+      const withGeo = rows.filter((r) => r.longitude != null && r.latitude != null);
+      if (!circle) return withGeo;
+      return withGeo.filter(
+        (r) => distanceM(circle.centerLng, circle.centerLat, r.longitude!, r.latitude!) <= circle.radiusM,
+      );
+    },
+    [rows, circle],
   );
   const pointsKey = useMemo(
     () => points.map((p) => p.id).join(","),
     [points],
   );
+
+  // 원 적용/해제 시 표시 count 동기화
+  useEffect(() => {
+    setCount(points.length);
+  }, [points.length]);
 
   // 현재 viewport bbox 기준 다시 가져오기
   const refresh = async () => {
@@ -115,6 +145,7 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
     map.on("moveend", onMoveEnd);
 
     mapRef.current = map;
+    map.once("load", () => map.resize());
     return () => {
       clearTimeout(debounce);
       map.off("movestart", onMoveStart);
@@ -124,6 +155,74 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoMode]);
+
+  // drawMode 변경 시 maplibre 인터랙션 토글 + 마우스 핸들러
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (drawMode) {
+      map.dragPan.disable();
+      map.boxZoom.disable();
+      map.dragRotate.disable();
+    } else {
+      map.dragPan.enable();
+      map.boxZoom.enable();
+      map.dragRotate.enable();
+    }
+  }, [drawMode]);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!drawMode) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setDrawing({ x0: x, y0: y, x1: x, y1: y });
+    setCircle(null);
+  }, [drawMode]);
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!drawing) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setDrawing({
+      x0: drawing.x0, y0: drawing.y0,
+      x1: e.clientX - rect.left, y1: e.clientY - rect.top,
+    });
+  }, [drawing]);
+
+  const onMouseUp = useCallback((e: React.MouseEvent) => {
+    if (!drawing || !mapRef.current) return;
+    const map = mapRef.current;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x1 = e.clientX - rect.left;
+    const y1 = e.clientY - rect.top;
+    const center = map.unproject([drawing.x0, drawing.y0]);
+    const edge = map.unproject([x1, y1]);
+    const radiusM = distanceM(center.lng, center.lat, edge.lng, edge.lat);
+    setDrawing(null);
+    if (radiusM > 50) {
+      setCircle({ centerLng: center.lng, centerLat: center.lat, radiusM });
+      // 원 내부로 fit
+      setTimeout(() => {
+        const m = mapRef.current;
+        if (!m) return;
+        // 반경 기반 대략 bbox
+        const dLat = (radiusM / 111320);
+        const dLng = (radiusM / (111320 * Math.cos(center.lat * Math.PI / 180)));
+        m.fitBounds([
+          [center.lng - dLng, center.lat - dLat],
+          [center.lng + dLng, center.lat + dLat],
+        ], { padding: 40, duration: 600 });
+      }, 50);
+    } else {
+      setCircle(null);
+    }
+    setDrawMode(false);
+  }, [drawing]);
+
+  const drawingPxRadius = drawing
+    ? Math.hypot(drawing.x1 - drawing.x0, drawing.y1 - drawing.y0)
+    : 0;
 
   // 마커 갱신
   useEffect(() => {
@@ -185,10 +284,41 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
         className="rounded-md border bg-muted/20 overflow-hidden"
       />
 
-      {/* 컨트롤 오버레이 — 우상단 */}
-      <div className="absolute left-3 top-3 flex flex-col gap-2 z-10">
+      {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}
+      <div
+        className="absolute inset-0 z-20"
+        style={{
+          cursor: drawMode ? "crosshair" : "auto",
+          pointerEvents: drawMode ? "auto" : "none",
+        }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+      >
+        {drawing && (
+          <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: "none" }}>
+            <circle
+              cx={drawing.x0}
+              cy={drawing.y0}
+              r={drawingPxRadius}
+              fill="rgba(220, 38, 38, 0.15)"
+              stroke="#dc2626"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+            />
+          </svg>
+        )}
+      </div>
+
+      {/* 컨트롤 오버레이 — 좌상단 */}
+      <div className="absolute left-3 top-3 flex flex-col gap-2 z-30">
         <div className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm">
           마커 <strong>{count.toLocaleString()}</strong>개
+          {circle && (
+            <span className="text-muted-foreground ml-1">
+              (반경 {(circle.radiusM / 1000).toFixed(1)}km)
+            </span>
+          )}
           {loading && <span className="ml-2 text-muted-foreground">불러오는 중…</span>}
         </div>
         <label className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm flex items-center gap-1.5 cursor-pointer select-none">
@@ -199,6 +329,27 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
           />
           <span>지도 이동 시 자동 새로고침</span>
         </label>
+        <button
+          type="button"
+          onClick={() => {
+            if (circle) {
+              setCircle(null);
+              setDrawMode(false);
+            } else {
+              setDrawMode((m) => !m);
+            }
+          }}
+          className={
+            "rounded-md px-3 py-1.5 text-xs border shadow-sm font-medium text-left " +
+            (drawMode
+              ? "bg-red-600 text-white border-red-600"
+              : circle
+                ? "bg-background/95 text-foreground border-border hover:bg-muted"
+                : "bg-background/95 text-foreground border-border hover:bg-muted")
+          }
+        >
+          {drawMode ? "📍 드래그로 원 그리기" : circle ? "✕ 원형 선택 해제" : "⭕ 원형 영역 선택"}
+        </button>
       </div>
 
       {/* 수동 새로고침 버튼 — 화면 중앙 상단 */}
