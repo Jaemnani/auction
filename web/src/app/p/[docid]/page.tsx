@@ -31,12 +31,17 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
   const dxdy = (detail.dspslGdsDxdyInfo ?? {}) as Record<string, unknown>;
   const aeeWevl = (detail.aeeWevlMnpntLst ?? []) as Array<Record<string, unknown>>;
 
-  // 코드 이름 매핑
+  // 코드 이름 매핑.
+  // sgg는 sd+code 페어로 정확히 lookup (단순 code 매칭 시 동명 코드 충돌:
+  // 예 code=650 → sd=11이면 서초구, sd=41이면 포천시).
   const codes = [
     p.usage_lcl_cd, p.usage_mcl_cd, p.usage_scl_cd,
-    p.sd_code, p.sgg_code, cs?.court_code,
+    p.sd_code, cs?.court_code,
   ].filter((c): c is string => !!c);
-  const names = await fetchCodeNames(codes);
+  const sggPairs = (p.sd_code && p.sgg_code)
+    ? [{ sd_code: p.sd_code, sgg_code: p.sgg_code }]
+    : [];
+  const names = await fetchCodeNames(codes, sggPairs);
 
   // 사진 정렬 + URL 변환
   const photos = (p.property_photos ?? [])

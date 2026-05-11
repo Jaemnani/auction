@@ -193,18 +193,45 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
 }
 
 // 코드 → 이름 매핑 (지역/용도)
-export async function fetchCodeNames(codes: string[]) {
+//
+// 주의: regions_sgg는 PK가 (sd_code, code) 복합이라 같은 code가 여러 sd에 걸쳐 존재.
+//   예: code=650 → sd=11일 때 "서초구", sd=41일 때 "포천시"
+// 그래서 sgg는 단일 code 매칭이 아니라 (sd, code) 페어로 받아야 안전.
+// sggPairs를 전달하면 그것으로 정확히 lookup, 그렇지 않으면 단일 code (sd 모호) 호환 모드.
+export async function fetchCodeNames(
+  codes: string[],
+  sggPairs: Array<{ sd_code: string; sgg_code: string }> = [],
+) {
   const filtered = Array.from(new Set(codes.filter(Boolean)));
-  if (filtered.length === 0) return {} as Record<string, string>;
-
   const out: Record<string, string> = {};
-  // 지역 (sd, sgg)
-  const sd = await supabase.from("regions_sd").select("code, name").in("code", filtered);
-  const sgg = await supabase.from("regions_sgg").select("code, name").in("code", filtered);
-  const usage = await supabase.from("usage_codes").select("code, name").in("code", filtered);
-  const courts = await supabase.from("courts").select("code, name").in("code", filtered);
-  for (const r of [...(sd.data ?? []), ...(sgg.data ?? []), ...(usage.data ?? []), ...(courts.data ?? [])]) {
-    out[r.code] = r.name;
+  if (filtered.length === 0 && sggPairs.length === 0) return out;
+
+  // sd / usage / courts — code unique이므로 단일 in() 매칭으로 안전
+  if (filtered.length > 0) {
+    const sdRes = await supabase.from("regions_sd").select("code, name").in("code", filtered);
+    const usageRes = await supabase.from("usage_codes").select("code, name").in("code", filtered);
+    const courtsRes = await supabase.from("courts").select("code, name").in("code", filtered);
+    for (const r of [...(sdRes.data ?? []), ...(usageRes.data ?? []), ...(courtsRes.data ?? [])]) {
+      out[r.code] = r.name;
+    }
+  }
+
+  // sgg는 (sd, code) 페어로 정확 lookup
+  if (sggPairs.length > 0) {
+    const orFilter = sggPairs
+      .map((p) => `and(sd_code.eq.${p.sd_code},code.eq.${p.sgg_code})`)
+      .join(",");
+    const sggRes = await supabase
+      .from("regions_sgg")
+      .select("sd_code, code, name")
+      .or(orFilter);
+    for (const row of sggRes.data ?? []) {
+      // 입력 페어와 정확 매칭된 행만 (방어적)
+      const pair = sggPairs.find(
+        (p) => p.sd_code === row.sd_code && p.sgg_code === row.code,
+      );
+      if (pair) out[row.code] = row.name;
+    }
   }
   return out;
 }
