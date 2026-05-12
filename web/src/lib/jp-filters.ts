@@ -46,8 +46,11 @@ export function parseJpFilters(
 ): JpFilters {
   const get = (k: string): string | null => {
     const v = sp[k];
-    if (Array.isArray(v)) return v[0] ?? null;
-    return v ?? null;
+    const s = Array.isArray(v) ? v[0] : v;
+    // 빈 문자열도 null로 — form submit 시 빈 input은 "" 그대로 들어와
+    // 후속 Number("") = 0 으로 잘못 파싱되는 것 방지
+    if (s == null || s === "") return null;
+    return s;
   };
   const num = (k: string): number | null => {
     const v = get(k);
