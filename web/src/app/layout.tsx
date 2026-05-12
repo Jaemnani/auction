@@ -7,17 +7,19 @@ import { AreaUnitToggle } from "@/components/area-unit-toggle";
 import { CountryToggle } from "@/components/country-toggle";
 import { PrimaryNav } from "@/components/primary-nav";
 
-// aib.vote와 동일한 영문/숫자 폰트 (한글은 Pretendard Variable, globals.css에서 import)
+// aib.vote와 동일한 영문/숫자 폰트 (한글은 Pretendard Variable, head <link>)
+// LCP 개선 — weight 5종 → 핵심 3종 (400/600/700) 만 로드.
 const barlow = Barlow({
   variable: "--font-barlow",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "600", "700"],
   display: "swap",
 });
 
 const monoFont = JetBrains_Mono({
   variable: "--font-mono",
   subsets: ["latin"],
+  weight: ["400", "500"],
   display: "swap",
 });
 

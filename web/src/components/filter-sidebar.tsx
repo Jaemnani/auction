@@ -191,7 +191,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         <div className="w-44">
           <Label className="text-xs">정렬</Label>
           <Select value={f.sort ?? "sale_date"} onValueChange={(v) => set("sort", (pickStr(v) ?? "sale_date") as PropertyFilters["sort"])}>
-            <SelectTrigger className="w-full"><SelectValue>{sortLabelOf(f.sort)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="정렬"><SelectValue>{sortLabelOf(f.sort)}</SelectValue></SelectTrigger>
             <SelectContent>
               {SORT_OPTIONS.map((o) => (
                 <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
@@ -217,7 +217,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         <div>
           <Label className="text-xs">법원</Label>
           <Select value={f.court ?? "all"} onValueChange={(v) => set("court", pickStr(v))}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="전체">{nameOf(f.court, courts)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="법원"><SelectValue placeholder="전체">{nameOf(f.court, courts)}</SelectValue></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체</SelectItem>
               {courts.map((c) => (
@@ -232,7 +232,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
             set("sd", pickStr(v));
             set("sgg", undefined);
           }}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="전체">{nameOf(f.sd, sdList)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="시·도"><SelectValue placeholder="전체">{nameOf(f.sd, sdList)}</SelectValue></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체</SelectItem>
               {sdList.map((s) => (
@@ -244,7 +244,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         <div>
           <Label className="text-xs">시·군·구</Label>
           <Select value={f.sgg ?? "all"} onValueChange={(v) => set("sgg", pickStr(v))} disabled={!f.sd}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="전체">{nameOf(f.sgg, sgg)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="시·군·구"><SelectValue placeholder="전체">{nameOf(f.sgg, sgg)}</SelectValue></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체</SelectItem>
               {sgg.map((s) => (
@@ -259,7 +259,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
             set("usage_lcl", pickStr(v));
             set("usage_mcl", undefined);
           }}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="전체">{nameOf(f.usage_lcl, usageLcl)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="용도 대분류"><SelectValue placeholder="전체">{nameOf(f.usage_lcl, usageLcl)}</SelectValue></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체</SelectItem>
               {usageLcl.map((u) => (
@@ -271,7 +271,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         <div>
           <Label className="text-xs">용도 (중)</Label>
           <Select value={f.usage_mcl ?? "all"} onValueChange={(v) => set("usage_mcl", pickStr(v))} disabled={!f.usage_lcl}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="전체">{nameOf(f.usage_mcl, usageMcl)}</SelectValue></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="용도 중분류"><SelectValue placeholder="전체">{nameOf(f.usage_mcl, usageMcl)}</SelectValue></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체</SelectItem>
               {usageMcl.map((u) => (
@@ -323,7 +323,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
                 set("addr_state", s === "with_road" || s === "no_road" ? s : undefined);
               }}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-label="주소 상태">
                 <SelectValue placeholder="전체">{
                   f.addr_state === "with_road" ? "도로명 있음만"
                   : f.addr_state === "no_road" ? "도로명 미수집만"
