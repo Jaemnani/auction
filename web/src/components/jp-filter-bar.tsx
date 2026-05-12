@@ -5,7 +5,7 @@ import {
   type JpFilters,
   SALE_CLS_OPTIONS, STATUS_OPTIONS, CASE_KIND_OPTIONS,
 } from "@/lib/jp-filters";
-import { getT } from "@/lib/i18n";
+import { getT } from "@/lib/i18n-server";
 
 type Props = {
   action: string;                           // "/jp" or "/jp/map"

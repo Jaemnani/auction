@@ -8,8 +8,9 @@
 //
 // 향후 next-intl 마이그레이션 시: messages 구조 그대로 + t() 호출 사이트만 useTranslations로 치환.
 
-import { headers } from "next/headers";
-import { usePathname } from "next/navigation";
+// 순수 i18n 모듈 — server/client 양쪽에서 안전하게 import.
+// server hook → lib/i18n-server.ts (getT)
+// client hook → lib/i18n-client.ts (useT)
 
 export const LOCALES = ["ko", "ja"] as const;
 export type Locale = (typeof LOCALES)[number];
@@ -156,18 +157,5 @@ export function makeT(locale: Locale): T {
       ?? key;
 }
 
-/**
- * Server component용 — Next.js 16 headers()로 path 추출.
- * middleware에서 'x-pathname' 헤더 설정 필요 (없으면 ko fallback).
- */
-export async function getT(): Promise<T> {
-  const h = await headers();
-  const path = h.get("x-pathname") ?? h.get("x-invoke-path") ?? "/";
-  return makeT(localeFromPath(path));
-}
-
-/** Client component hook — usePathname 기반. */
-export function useT(): T {
-  const pathname = usePathname();
-  return makeT(localeFromPath(pathname));
-}
+// getT는 lib/i18n-server.ts (next/headers 사용 — server only)
+// useT는 lib/i18n-client.ts (next/navigation — client only)

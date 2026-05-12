@@ -75,7 +75,9 @@ async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: numb
       "detail_result, " +
       "jp_property_photos(storage_path, thumb_path), " +
       "jp_cases!inner(case_no, case_kind, jp_courts!inner(code, name))",
-      { count: "estimated" },
+      // estimated는 selective filter (pref+sale_cls 등 조합) 시 0으로 추정되는 버그.
+      // 일본 데이터셋은 ~1.2k건이라 exact 비용 무시 가능.
+      { count: "exact" },
     );
   if (filters.pref) q = q.eq("prefecture_code", filters.pref);
   if (filters.sale_cls) q = q.eq("sale_cls", filters.sale_cls);

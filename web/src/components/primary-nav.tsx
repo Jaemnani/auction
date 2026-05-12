@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useT } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-client";
 
 /**
  * 헤더 좌측 목록/지도 nav.
