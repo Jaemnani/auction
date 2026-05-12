@@ -311,20 +311,26 @@ export default async function JpListingPage(props: {
           </div>
           <div className="flex items-center gap-1">
             <Link href={buildJpHref("/jp", filters, { page: 1 })}
-                  className={linkCls(false, filters.page <= 1)}>«</Link>
+                  className={linkCls(false, filters.page <= 1)}
+                  aria-label="처음 페이지">«</Link>
             <Link href={buildJpHref("/jp", filters, { page: filters.page - 1 })}
-                  className={linkCls(false, filters.page <= 1)}>‹</Link>
+                  className={linkCls(false, filters.page <= 1)}
+                  aria-label="이전 페이지">‹</Link>
             {Array.from(
               { length: Math.min(5, totalPages) },
               (_, i) => Math.max(1, Math.min(totalPages - 4, filters.page - 2)) + i,
             ).filter((p) => p >= 1 && p <= totalPages).map((p) => (
               <Link key={p} href={buildJpHref("/jp", filters, { page: p })}
-                    className={linkCls(p === filters.page)}>{p}</Link>
+                    className={linkCls(p === filters.page)}
+                    aria-label={`${p}페이지`}
+                    aria-current={p === filters.page ? "page" : undefined}>{p}</Link>
             ))}
             <Link href={buildJpHref("/jp", filters, { page: filters.page + 1 })}
-                  className={linkCls(false, filters.page >= totalPages)}>›</Link>
+                  className={linkCls(false, filters.page >= totalPages)}
+                  aria-label="다음 페이지">›</Link>
             <Link href={buildJpHref("/jp", filters, { page: totalPages })}
-                  className={linkCls(false, filters.page >= totalPages)}>»</Link>
+                  className={linkCls(false, filters.page >= totalPages)}
+                  aria-label="마지막 페이지">»</Link>
           </div>
         </div>
       )}

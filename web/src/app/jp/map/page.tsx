@@ -1,10 +1,14 @@
 import Link from "next/link";
+import nextDynamic from "next/dynamic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { JpPropertyMap, type JpMapRow } from "@/components/jp-property-map";
+import type { JpMapRow } from "@/components/jp-property-map";
 import { supabase } from "@/lib/supabase";
 import { JpFilterBar } from "@/components/jp-filter-bar";
 import { type JpFilters, parseJpFilters } from "@/lib/jp-filters";
+
+// MapLibre 청크 분리
+const JpPropertyMap = nextDynamic(() => import("@/components/jp-property-map").then((m) => ({ default: m.JpPropertyMap })));
 
 export const metadata = {
   title: "일본 매물 지도 — BIT",

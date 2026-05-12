@@ -19,14 +19,16 @@ export function PropertyTable({ rows, usageNames = {} }: Props) {
 
   return (
     <ul className="border rounded-md divide-y bg-card">
-      {rows.map((r) => (
-        <PropertyRow key={r.id} r={r} usageNames={usageNames} />
+      {rows.map((r, i) => (
+        <PropertyRow key={r.id} r={r} usageNames={usageNames} eager={i === 0} />
       ))}
     </ul>
   );
 }
 
-function PropertyRow({ r, usageNames }: { r: Property; usageNames: Record<string, string> }) {
+function PropertyRow({ r, usageNames, eager = false }: {
+  r: Property; usageNames: Record<string, string>; eager?: boolean;
+}) {
   const ratio = r.appraisal_amount && r.min_sale_price
     ? Math.round((r.min_sale_price / r.appraisal_amount) * 100)
     : null;
@@ -56,7 +58,9 @@ function PropertyRow({ r, usageNames }: { r: Property; usageNames: Record<string
               <img
                 src={thumbUrl}
                 alt=""
-                loading="lazy"
+                loading={eager ? "eager" : "lazy"}
+                fetchPriority={eager ? "high" : "auto"}
+                decoding={eager ? "sync" : "async"}
                 className="h-full w-full object-cover"
               />
             ) : (

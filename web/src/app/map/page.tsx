@@ -1,9 +1,12 @@
+import nextDynamic from "next/dynamic";
 import { FilterSidebar } from "@/components/filter-sidebar";
-import { PropertyMap } from "@/components/property-map";
 import {
   fetchCourts, fetchPropertiesForMap, fetchSdList, fetchUsageList,
 } from "@/lib/queries";
 import { parseFiltersFromSearchParams } from "@/lib/url";
+
+// MapLibre 무거운 의존성 — 청크 분리.
+const PropertyMap = nextDynamic(() => import("@/components/property-map").then((m) => ({ default: m.PropertyMap })));
 
 export const dynamic = "force-dynamic";
 

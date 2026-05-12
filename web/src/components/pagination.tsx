@@ -35,28 +35,34 @@ export function Pagination({ filters, page, pageSize, total, basePath }: Props) 
           href={buildHref(basePath, filters, { page: 1 })}
           className={linkCls(false, page <= 1)}
           aria-disabled={page <= 1}
+          aria-label="처음 페이지"
         >«</Link>
         <Link
           href={buildHref(basePath, filters, { page: page - 1 })}
           className={linkCls(false, page <= 1)}
           aria-disabled={page <= 1}
+          aria-label="이전 페이지"
         >‹</Link>
         {Array.from({ length: end - realStart + 1 }, (_, i) => realStart + i).map((p) => (
           <Link
             key={p}
             href={buildHref(basePath, filters, { page: p })}
             className={linkCls(p === page)}
+            aria-label={`${p}페이지`}
+            aria-current={p === page ? "page" : undefined}
           >{p}</Link>
         ))}
         <Link
           href={buildHref(basePath, filters, { page: page + 1 })}
           className={linkCls(false, page >= totalPages)}
           aria-disabled={page >= totalPages}
+          aria-label="다음 페이지"
         >›</Link>
         <Link
           href={buildHref(basePath, filters, { page: totalPages })}
           className={linkCls(false, page >= totalPages)}
           aria-disabled={page >= totalPages}
+          aria-label="마지막 페이지"
         >»</Link>
       </div>
     </div>

@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
+import nextDynamic from "next/dynamic";
 import { fetchCodeNames, fetchProperty, fetchRegionStats, photoPublicUrl } from "@/lib/queries";
-import { MolitDeals } from "@/components/molit-deals";
+
+// MolitDeals — 클라이언트 fetch 컴포넌트. 청크 분리로 초기 JS 페이로드 축소.
+const MolitDeals = nextDynamic(() => import("@/components/molit-deals").then((m) => ({ default: m.MolitDeals })));
 import { fmtDate, fmtMoney, fmtDiscount, fmtPercent } from "@/lib/format";
 import {
   parseRiskFlags, parseDposRate, parsePrimaryLien,

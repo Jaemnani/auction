@@ -35,7 +35,9 @@ export default function RootLayout({
       className={`${barlow.variable} ${monoFont.variable} h-full antialiased`}
     >
       <head>
-        {/* Pretendard Variable — 한글 본문 (aib.vote와 동일) */}
+        {/* Pretendard Variable — 한글 본문. preconnect로 TLS handshake 선행. */}
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
         <link
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
