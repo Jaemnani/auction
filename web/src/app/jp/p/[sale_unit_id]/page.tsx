@@ -174,7 +174,7 @@ export default async function JpDetailPage({
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between text-xs">
         <Link href="/jp" className="text-muted-foreground hover:text-primary hover:underline">
-          ← 일본 매물 목록
+          ← 物件一覧
         </Link>
         <ExportButtons markdown={markdown} filename={mdFilename} />
       </div>
@@ -189,7 +189,7 @@ export default async function JpDetailPage({
             </span>
           )}
           {row.yen_10k_trap && (
-            <Badge variant="destructive" className="text-xs">⚠ 1万円 함정 의심</Badge>
+            <Badge variant="destructive" className="text-xs">⚠ 1万円トラップの疑い</Badge>
           )}
           {detail.has_three_set_pdf && (
             <a href={`/api/jp/pdf/${sale_unit_id}`} target="_blank" rel="noopener noreferrer"
@@ -222,23 +222,23 @@ export default async function JpDetailPage({
                 {photoUrls.map((url, i) => (
                   <a key={url + i} href={url} target="_blank" rel="noopener noreferrer">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={`매물 사진 ${i + 1}`} className="w-full rounded-md border" />
+                    <img src={url} alt={`物件写真 ${i + 1}`} className="w-full rounded-md border" />
                   </a>
                 ))}
               </div>
             )}
             <p className="text-[10px] text-muted-foreground mt-2">
               {ownPhotos.length > 0
-                ? "Supabase Storage 자체 호스팅"
-                : "BIT 원본 직접 연결 (자체 적재 미완)"}
+                ? "Supabase Storage セルフホスト"
+                : "BIT 元データ直接リンク (取込未完)"}
             </p>
           </CardContent>
         </Card>
 
-        {/* 가격 */}
+        {/* 価格 */}
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base">3종 가격 + 보증금</CardTitle>
+            <CardTitle className="text-base">3種価格 + 保証金</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -247,38 +247,38 @@ export default async function JpDetailPage({
                 <div className="text-2xl font-bold text-amber-600 font-mono">
                   {fmtJpy(prices.sale_standard_price ?? row.sale_standard_price)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">법원이 정한 기준가</div>
+                <div className="text-[10px] text-muted-foreground">裁判所が定めた基準価額</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">買受可能価額</div>
                 <div className="text-xl font-semibold font-mono">
                   {fmtJpy(prices.purchase_possible_price ?? row.purchase_possible_price)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">매수 가능 최저가 (= 기준 × 80%)</div>
+                <div className="text-[10px] text-muted-foreground">買受可能の最低額 (= 基準 × 80%)</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">買受申出保証金</div>
                 <div className="text-base font-semibold font-mono">
                   {fmtJpy(prices.bid_deposit ?? row.bid_deposit)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">입찰 보증금 (= 기준 × 20%)</div>
+                <div className="text-[10px] text-muted-foreground">入札保証金 (= 基準 × 20%)</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">鑑定評価額</div>
                 <div className="text-base text-muted-foreground font-mono">
-                  미수집
+                  未取得
                 </div>
-                <div className="text-[10px] text-muted-foreground">상세 페이지 추가 정찰 필요</div>
+                <div className="text-[10px] text-muted-foreground">詳細ページからの追加偵察が必要</div>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* 매각 일정 */}
+      {/* 売却スケジュール */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">📅 매각 일정</CardTitle>
+          <CardTitle className="text-base">📅 売却スケジュール</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid md:grid-cols-2 gap-3 text-sm">
@@ -314,7 +314,7 @@ export default async function JpDetailPage({
       {properties.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">🏠 物件 명세</CardTitle>
+            <CardTitle className="text-base">🏠 物件明細</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {properties.map((prop, idx) => {
@@ -343,11 +343,11 @@ export default async function JpDetailPage({
         </Card>
       )}
 
-      {/* 교통 + 위치 + 지도 */}
+      {/* 位置 + 交通 + マップ */}
       {(row.transit_info || addr || hasGeo) && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">🚉 위치 + 교통</CardTitle>
+            <CardTitle className="text-base">🚉 位置 + 交通</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {row.transit_info && (
@@ -358,13 +358,13 @@ export default async function JpDetailPage({
             {hasGeo && osmEmbed && (
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground font-mono">
-                  좌표: {lat}, {lng}
+                  座標: {lat}, {lng}
                 </div>
                 <iframe
                   src={osmEmbed}
                   className="w-full h-[300px] rounded-md border"
                   loading="lazy"
-                  title="OpenStreetMap 미리보기"
+                  title="OpenStreetMap プレビュー"
                 />
               </div>
             )}
@@ -372,13 +372,13 @@ export default async function JpDetailPage({
               {googleMap && (
                 <a href={googleMap} target="_blank" rel="noopener noreferrer"
                    className="text-xs rounded border bg-card hover:bg-muted px-3 py-1.5 inline-block">
-                  Google 지도 {hasGeo ? "(좌표)" : "(주소 검색)"} →
+                  Google マップ {hasGeo ? "(座標)" : "(住所検索)"} →
                 </a>
               )}
               {naverMap && (
                 <a href={naverMap} target="_blank" rel="noopener noreferrer"
                    className="text-xs rounded border bg-card hover:bg-muted px-3 py-1.5 inline-block">
-                  Naver 지도 {hasGeo ? "(좌표)" : "(주소 검색)"} →
+                  Naver マップ {hasGeo ? "(座標)" : "(住所検索)"} →
                 </a>
               )}
             </div>
@@ -386,20 +386,20 @@ export default async function JpDetailPage({
         </Card>
       )}
 
-      {/* BIT 원본 */}
+      {/* BIT 元データ */}
       <Card className="bg-muted/20">
         <CardContent className="text-xs text-muted-foreground py-4 space-y-1">
           <div>
-            <span className="font-medium">BIT 원본:</span>{" "}
+            <span className="font-medium">BIT 元データ:</span>{" "}
             <a href="https://www.bit.courts.go.jp/" target="_blank" rel="noopener noreferrer"
                className="text-primary hover:underline">bit.courts.go.jp</a>
-            {" → 매물 상세는 form POST 기반이라 직접 링크 불가. "}
+            {" → 物件詳細は form POST のため直接リンク不可。 "}
             <code className="text-foreground bg-muted px-1 rounded">saleUnitId={sale_unit_id}</code>
             {" / "}
             <code className="text-foreground bg-muted px-1 rounded">courtId={row.jp_cases?.jp_courts?.code ?? "?"}</code>
           </div>
           {detail.has_three_set_pdf && (
-            <div>📑 BIT 사이트에서 三点セット(物件明細書·現況調査報告書·評価書) PDF 다운로드 가능 — 본 사이트에서는 미러링 미구현</div>
+            <div>📑 BIT サイトから 三点セット (物件明細書·現況調査報告書·評価書) PDF ダウンロード可能。</div>
           )}
         </CardContent>
       </Card>

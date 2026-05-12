@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useT } from "@/lib/i18n";
 
 /**
  * 헤더 좌측 목록/지도 nav.
@@ -14,6 +15,7 @@ import { usePathname } from "next/navigation";
 export function PrimaryNav() {
   const pathname = usePathname() ?? "/";
   const isJp = pathname === "/jp" || pathname.startsWith("/jp/");
+  const t = useT();
 
   const listHref = isJp ? "/jp" : "/";
   const mapHref = isJp ? "/jp/map" : "/map";
@@ -33,8 +35,8 @@ export function PrimaryNav() {
 
   return (
     <nav className="flex items-center gap-1 text-sm">
-      <Link href={listHref} className={cls(isListActive)}>목록</Link>
-      <Link href={mapHref} className={cls(isMapActive)}>지도</Link>
+      <Link href={listHref} className={cls(isListActive)}>{t("nav.list")}</Link>
+      <Link href={mapHref} className={cls(isMapActive)}>{t("nav.map")}</Link>
     </nav>
   );
 }

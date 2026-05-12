@@ -11,8 +11,8 @@ import { type JpFilters, parseJpFilters } from "@/lib/jp-filters";
 const JpPropertyMap = nextDynamic(() => import("@/components/jp-property-map").then((m) => ({ default: m.JpPropertyMap })));
 
 export const metadata = {
-  title: "일본 매물 지도 — BIT",
-  description: "BIT 매물 위치 지도 (좌표 있는 매물만)",
+  title: "物件マップ — BIT",
+  description: "BIT 物件マップ (座標あり物件)",
 };
 
 export const dynamic = "force-dynamic";
@@ -95,14 +95,14 @@ export default async function JpMapPage(props: {
     <div className="space-y-4 max-w-6xl mx-auto">
       <section className="rounded-lg border bg-card p-5 space-y-2">
         <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-xs">좌표 매물 {rows.length}건</Badge>
-          <Badge variant="outline" className="text-xs">OpenFreeMap 타일</Badge>
+          <Badge variant="secondary" className="text-xs">座標あり {rows.length}件</Badge>
+          <Badge variant="outline" className="text-xs">OpenFreeMap タイル</Badge>
         </div>
-        <h1 className="text-xl font-bold tracking-tight">🇯🇵 매물 지도</h1>
+        <h1 className="text-xl font-bold tracking-tight">🇯🇵 物件マップ</h1>
         <p className="text-sm text-muted-foreground">
-          매물 위치를 일본 전역 지도에서 확인. 마커 클릭 시 사건번호·가격·주소·상세 링크 팝업.
+          物件の位置を日本全国マップで確認。マーカーをクリックすると 事件番号·価格·住所·詳細リンクのポップアップ。
           {" "}
-          <Link href="/jp" className="text-primary hover:underline">목록 보기</Link>
+          <Link href="/jp" className="text-primary hover:underline">リスト表示</Link>
         </p>
       </section>
 

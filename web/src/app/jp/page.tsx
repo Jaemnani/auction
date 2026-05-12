@@ -15,8 +15,8 @@ import {
 } from "@/lib/jp-filters";
 
 export const metadata = {
-  title: "일본 부동산 경매 — BIT",
-  description: "BIT(不動産競売物件情報サイト) 매물 검색 (도쿄 73건 적재)",
+  title: "日本 不動産競売 — BIT",
+  description: "BIT(不動産競売物件情報サイト) 物件検索",
 };
 
 export const revalidate = 300;
@@ -151,14 +151,14 @@ function thumbUrl(row: JpRow): string | null {
 }
 
 const ROADMAP = [
-  { phase: "1", label: "BIT 정찰 + 매물 흐름", done: true },
-  { phase: "2", label: "스키마(jp_*) + 마이그레이션", done: true },
-  { phase: "3", label: "클라이언트 + 검색 파서 (도쿄 73건)", done: true },
-  { phase: "4", label: "상세 파서 + backfill (3종 가격·매각기일·物件 fields)", done: true },
-  { phase: "5", label: "/jp 리스트 + 상세 페이지", done: true },
-  { phase: "6", label: "사진 자체 호스팅 (jp-auction-photos 버킷)", done: false },
-  { phase: "7", label: "전국 47도도부현 풀 적재", done: false },
-  { phase: "8", label: "三点セット PDF · 좌표 · 지도", done: false },
+  { phase: "1", label: "BIT 偵察 + 物件フロー", done: true },
+  { phase: "2", label: "スキーマ(jp_*) + マイグレーション", done: true },
+  { phase: "3", label: "クライアント + 検索パーサ", done: true },
+  { phase: "4", label: "詳細パーサ + backfill (3種価格·売却期日·物件明細)", done: true },
+  { phase: "5", label: "/jp リスト + 詳細ページ", done: true },
+  { phase: "6", label: "写真セルフホスト (jp-auction-photos)", done: true },
+  { phase: "7", label: "全国47都道府県 取込", done: true },
+  { phase: "8", label: "三点セット PDF · 座標 · マップ", done: true },
 ];
 
 export default async function JpListingPage(props: {
@@ -180,22 +180,21 @@ export default async function JpListingPage(props: {
     <div className="space-y-6 max-w-6xl mx-auto">
       <section className="rounded-lg border bg-card p-6 space-y-2">
         <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-xs">도쿄 적재 완료 · {count}건</Badge>
-          <Badge variant="outline" className="text-xs">상세 파서 검증</Badge>
-          <Badge variant="outline" className="text-xs">전국 풀 적재 / 사진 자체 호스팅 진행중</Badge>
+          <Badge variant="secondary" className="text-xs">全国取込済 · {count}件</Badge>
+          <Badge variant="outline" className="text-xs">詳細パーサ検証済</Badge>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">🇯🇵 일본 부동산 경매</h1>
+        <h1 className="text-2xl font-bold tracking-tight">🇯🇵 日本 不動産競売</h1>
         <p className="text-sm text-muted-foreground">
           BIT(<a href="https://www.bit.courts.go.jp" target="_blank" rel="noopener noreferrer"
-                 className="text-primary hover:underline">不動産競売物件情報サイト</a>) 매물.
-          한국 페이지와 동일 패턴으로 구축. 사건번호 클릭 시 상세 페이지로 이동.
+                 className="text-primary hover:underline">不動産競売物件情報サイト</a>)
+          の物件。事件番号をクリックすると詳細ページへ。
         </p>
         <div className="flex flex-wrap gap-2 pt-2">
           <Link href="/jp/map" className="text-sm rounded-md border bg-card hover:bg-muted px-3 py-1.5">
-            🗺️ 지도로 보기
+            🗺️ 地図で見る
           </Link>
           <Link href="/jp/about" className="text-sm rounded-md border bg-card hover:bg-muted px-3 py-1.5">
-            🇰🇷 vs 🇯🇵 비교 / 로드맵
+            🇰🇷 vs 🇯🇵 比較 / ロードマップ
           </Link>
         </div>
       </section>
@@ -203,30 +202,30 @@ export default async function JpListingPage(props: {
       {/* 필터 — 목록·지도 공통 컴포넌트 */}
       <JpFilterBar action="/jp" filters={filters} prefs={prefs} courts={courts} />
 
-      {/* 리스트 */}
+      {/* リスト */}
       <Card>
         <CardHeader className="flex flex-row items-baseline justify-between">
-          <CardTitle className="text-base">📋 매물 목록</CardTitle>
+          <CardTitle className="text-base">📋 物件一覧</CardTitle>
           <span className="text-xs text-muted-foreground">
-            총 {count}건 · {filters.page} / {totalPages} 페이지
+            全 {count}件 · {filters.page} / {totalPages} ページ
           </span>
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
             <div className="p-6 text-sm text-muted-foreground text-center">
-              조건에 맞는 매물이 없습니다.{" "}
-              <Link href="/jp" className="text-primary hover:underline">필터 초기화</Link>
+              条件に一致する物件はありません。{" "}
+              <Link href="/jp" className="text-primary hover:underline">フィルタをリセット</Link>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[80px]">사진</TableHead>
+                  <TableHead className="w-[80px]">写真</TableHead>
                   <TableHead className="w-[200px]">
-                    <JpSortableHeader field="sale_unit_id" label="사건번호 · 법원" />
+                    <JpSortableHeader field="sale_unit_id" label="事件番号 · 裁判所" />
                   </TableHead>
                   <TableHead className="w-[80px]">
-                    <JpSortableHeader field="sale_cls" label="종별" />
+                    <JpSortableHeader field="sale_cls" label="種別" />
                   </TableHead>
                   <TableHead className="w-[140px] text-right">
                     <JpSortableHeader field="price" label="売却基準" align="right" />
@@ -237,7 +236,7 @@ export default async function JpListingPage(props: {
                     <JpSortableHeader field="bid_period" label="入札期間" />
                   </TableHead>
                   <TableHead className="w-[100px]">
-                    <JpSortableHeader field="status" label="상태" />
+                    <JpSortableHeader field="status" label="状態" />
                   </TableHead>
                   <TableHead>
                     <JpSortableHeader field="address" label="所在地" />
@@ -307,30 +306,30 @@ export default async function JpListingPage(props: {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-xs text-muted-foreground">
-            총 <strong>{count.toLocaleString()}</strong>건 · {filters.page} / {totalPages} 페이지
+            全 <strong>{count.toLocaleString()}</strong>件 · {filters.page} / {totalPages} ページ
           </div>
           <div className="flex items-center gap-1">
             <Link href={buildJpHref("/jp", filters, { page: 1 })}
                   className={linkCls(false, filters.page <= 1)}
-                  aria-label="처음 페이지">«</Link>
+                  aria-label="最初のページ">«</Link>
             <Link href={buildJpHref("/jp", filters, { page: filters.page - 1 })}
                   className={linkCls(false, filters.page <= 1)}
-                  aria-label="이전 페이지">‹</Link>
+                  aria-label="前のページ">‹</Link>
             {Array.from(
               { length: Math.min(5, totalPages) },
               (_, i) => Math.max(1, Math.min(totalPages - 4, filters.page - 2)) + i,
             ).filter((p) => p >= 1 && p <= totalPages).map((p) => (
               <Link key={p} href={buildJpHref("/jp", filters, { page: p })}
                     className={linkCls(p === filters.page)}
-                    aria-label={`${p}페이지`}
+                    aria-label={`${p}ページ`}
                     aria-current={p === filters.page ? "page" : undefined}>{p}</Link>
             ))}
             <Link href={buildJpHref("/jp", filters, { page: filters.page + 1 })}
                   className={linkCls(false, filters.page >= totalPages)}
-                  aria-label="다음 페이지">›</Link>
+                  aria-label="次のページ">›</Link>
             <Link href={buildJpHref("/jp", filters, { page: totalPages })}
                   className={linkCls(false, filters.page >= totalPages)}
-                  aria-label="마지막 페이지">»</Link>
+                  aria-label="最後のページ">»</Link>
           </div>
         </div>
       )}
@@ -338,7 +337,7 @@ export default async function JpListingPage(props: {
       {/* 진행 상황 (하단) */}
       <Card className="bg-muted/20">
         <CardHeader>
-          <CardTitle className="text-base">📍 일본 사이트 구축 진행 상황</CardTitle>
+          <CardTitle className="text-base">📍 サイト構築 進行状況</CardTitle>
         </CardHeader>
         <CardContent className="space-y-1 text-sm">
           {ROADMAP.map((r) => (
@@ -352,9 +351,9 @@ export default async function JpListingPage(props: {
             </div>
           ))}
           <p className="text-xs text-muted-foreground pt-2 border-t">
-            데이터: <code className="text-foreground bg-muted px-1 rounded">jp_properties / jp_cases / jp_courts</code> ·
-            적재: <code className="text-foreground bg-muted px-1 rounded">jp_ingest.py</code> ·
-            한·일 차이: <Link href="/jp/about" className="text-primary hover:underline">/jp/about</Link>
+            データ: <code className="text-foreground bg-muted px-1 rounded">jp_properties / jp_cases / jp_courts</code> ·
+            取込: <code className="text-foreground bg-muted px-1 rounded">jp_ingest.py</code> ·
+            日韓比較: <Link href="/jp/about" className="text-primary hover:underline">/jp/about</Link>
           </p>
         </CardContent>
       </Card>

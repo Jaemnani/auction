@@ -5,6 +5,7 @@ import {
   type JpFilters,
   SALE_CLS_OPTIONS, STATUS_OPTIONS, CASE_KIND_OPTIONS,
 } from "@/lib/jp-filters";
+import { getT } from "@/lib/i18n";
 
 type Props = {
   action: string;                           // "/jp" or "/jp/map"
@@ -16,55 +17,68 @@ type Props = {
 /**
  * 일본 매물 필터 — 목록·지도 양쪽에서 동일하게 사용.
  * Server component (form submit으로 URL 변경) — 클라이언트 JS 불필요.
+ * 라벨은 lib/i18n으로 자동 일본어 (path /jp/* 컨텍스트).
  */
-export function JpFilterBar({ action, filters, prefs, courts }: Props) {
+export async function JpFilterBar({ action, filters, prefs, courts }: Props) {
+  const t = await getT();
   return (
     <Card>
       <CardContent className="p-3">
         <form method="get" action={action} className="grid grid-cols-2 sm:grid-cols-12 gap-2 text-sm">
           <select name="pref" defaultValue={filters.pref ?? ""}
+                  aria-label={t("filter.pref")}
                   className="sm:col-span-3 h-9 rounded-md border bg-background px-2 text-sm">
-            <option value="">도도부현 — 전체</option>
+            <option value="">{t("filter.pref")} — {t("common.all")}</option>
             {prefs.map((p) => (
               <option key={p.code} value={p.code}>{p.code} {p.name}</option>
             ))}
           </select>
           <select name="court" defaultValue={filters.court ?? ""}
+                  aria-label={t("filter.court")}
                   className="sm:col-span-3 h-9 rounded-md border bg-background px-2 text-sm">
-            <option value="">법원 — 전체</option>
+            <option value="">{t("filter.court")} — {t("common.all")}</option>
             {courts.map((c) => (
               <option key={c.code} value={c.code}>{c.name}</option>
             ))}
           </select>
           <select name="sale_cls" defaultValue={filters.sale_cls ?? ""}
+                  aria-label={t("filter.sale_cls")}
                   className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-            <option value="">종별 — 전체</option>
+            <option value="">{t("filter.sale_cls")} — {t("common.all")}</option>
             {SALE_CLS_OPTIONS.map((o) => (
               <option key={o.code} value={o.code}>{o.label}</option>
             ))}
           </select>
           <select name="status" defaultValue={filters.status ?? ""}
+                  aria-label={t("filter.status")}
                   className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-            <option value="">상태 — 전체</option>
+            <option value="">{t("filter.status")} — {t("common.all")}</option>
             {STATUS_OPTIONS.map((o) => (
               <option key={o.code} value={o.code}>{o.label}</option>
             ))}
           </select>
           <select name="case_kind" defaultValue={filters.case_kind ?? ""}
+                  aria-label={t("filter.case_kind")}
                   className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm">
-            <option value="">사건 종류 — 전체</option>
+            <option value="">{t("filter.case_kind")} — {t("common.all")}</option>
             {CASE_KIND_OPTIONS.map((o) => (
               <option key={o.code} value={o.code}>{o.label}</option>
             ))}
           </select>
 
-          <input name="price_min" type="number" placeholder="가격 최저 (円)"
+          <input name="price_min" type="number"
+                 placeholder={`${t("filter.price_min")} (円)`}
+                 aria-label={t("filter.price_min")}
                  defaultValue={filters.price_min ?? ""}
                  className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm" />
-          <input name="price_max" type="number" placeholder="가격 최고 (円)"
+          <input name="price_max" type="number"
+                 placeholder={`${t("filter.price_max")} (円)`}
+                 aria-label={t("filter.price_max")}
                  defaultValue={filters.price_max ?? ""}
                  className="sm:col-span-2 h-9 rounded-md border bg-background px-2 text-sm" />
-          <input name="q" placeholder="주소 / 사건번호"
+          <input name="q"
+                 placeholder={t("filter.kw")}
+                 aria-label={t("filter.kw")}
                  defaultValue={filters.q ?? ""}
                  className="sm:col-span-4 h-9 rounded-md border bg-background px-2 text-sm" />
 
@@ -73,17 +87,17 @@ export function JpFilterBar({ action, filters, prefs, courts }: Props) {
             <label className="inline-flex items-center gap-1 cursor-pointer select-none">
               <input type="checkbox" name="yen_10k" value="1"
                      defaultChecked={filters.yen_10k === "1"} />
-              <span>⚠ 1万円 함정만</span>
+              <span>{t("filter.yen10k")}</span>
             </label>
             <label className="inline-flex items-center gap-1 cursor-pointer select-none">
               <input type="checkbox" name="has_pdf" value="1"
                      defaultChecked={filters.has_pdf === "1"} />
-              <span>📑 三点セット 보유</span>
+              <span>{t("filter.has_pdf")}</span>
             </label>
             <label className="inline-flex items-center gap-1 cursor-pointer select-none">
               <input type="checkbox" name="with_geo" value="1"
                      defaultChecked={filters.with_geo === "1"} />
-              <span>🗺 좌표 보유만</span>
+              <span>{t("filter.with_geo")}</span>
             </label>
           </div>
 
@@ -93,12 +107,12 @@ export function JpFilterBar({ action, filters, prefs, courts }: Props) {
 
           <button type="submit"
                   className={cn(buttonVariants({ size: "sm" }), "sm:col-span-2 h-9")}>
-            검색
+            {t("common.apply")}
           </button>
 
           <a href={action}
              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "sm:col-span-2 h-9")}>
-            초기화
+            {t("common.reset")}
           </a>
         </form>
       </CardContent>
