@@ -5,6 +5,50 @@
 
 [![Deployed on Vercel](https://img.shields.io/badge/Vercel-deployed-black?logo=vercel)](https://auction-seven-omega.vercel.app)
 
+## Tagline-ko
+법원경매정보(courtauction.go.kr)의 공고중 매물을 무료로 검색·필터링·권리분석. 지도·인근 실거래가·위험 배지까지 한 화면에.
+
+## Tagline-en
+Free, filterable Korean court auction search — map view, nearby comps, and 25 auto risk flags. No fee-gated APIs.
+
+## Tagline-ja
+韓国の法院競売情報(courtauction.go.kr)を無料で検索・絞り込み・権利分析。地図、周辺取引事例、リスクバッジを一画面で確認できます。
+
+## 프로젝트 개요
+유료 사이트들이 잠가둔 공공 데이터(법원경매정보)를 다시 무료로 돌려놓는 프로젝트입니다.
+
+- 매일 새벽 자동 크롤링으로 전국 **약 17,000건의 공고중 매물**을 유지
+- 빠른 필터·정렬 + **인터랙티브 지도** + 사진 그리드 + 매각기일 이력 + 감정평가 요항
+- **위험 키워드 25종 자동 추출** — 유치권 / 법정지상권 / 선순위 임차인 / 위반건축물 / 맹지 / 농지 / 분묘기지권 / 지분매각 등
+- **인근 실거래가** (국토교통부 9종 OpenAPI) + 인근 낙찰 통계
+- **등기부등본·감정평가서 등 건당 수수료가 발생하는 API는 일체 사용하지 않음** — 무료 운영
+- **㎡ ↔ 평** 단위 토글, courtauction·네이버지도·카카오맵·구글맵 딥링크
+- 같은 코드베이스로 일본 BIT(`bit.courts.go.jp`) 매물 지원 준비 중 — 헤더 [한국 | 日本] 토글 이미 배포
+
+스택: Python 크롤러(httpx async) → Supabase(PostgreSQL + PostGIS + Storage) → Next.js 16(App Router) on Vercel. 지도 타일은 OpenFreeMap, 외부 시세는 data.go.kr / Kakao Local (서버 라우트로 키 가림).
+
+## Summary-en
+A free, fast search experience for Korea's official court auction listings (courtauction.go.kr) — the kind of data that paid sites have kept behind paywalls.
+
+- About **17,000 active listings** refreshed daily by an automated crawler
+- Filters, sorting, **interactive map**, photo gallery, sale-date history, appraisal summaries
+- **25 auto-extracted risk flags** — liens, statutory ground rights, senior tenants, illegal buildings, landlocked plots, farmland, share sales, and more
+- **Nearby comparable sales** via 9 government real-estate APIs (MOLIT) + nearby auction-result stats
+- **No fee-gated APIs** (e.g., per-query property registries) — the service stays free
+- Stack: Python crawler (httpx async) → Supabase (PostgreSQL + PostGIS + Storage) → Next.js 16 on Vercel. Map tiles from OpenFreeMap; market data proxied server-side
+- Japan support (BIT `bit.courts.go.jp`) coming next on the same codebase — header toggle [한국 | 日本] already live
+
+## Summary-ja
+韓国の法院競売情報(courtauction.go.kr)を無料で素早く検索できるサイト。有料サイトが囲い込んでいた公共データを再び公共に開放します。
+
+- 公告中の物件 約 **17,000件**を毎日自動クロールで更新
+- 絞り込み・並び替え・**インタラクティブ地図**・写真ギャラリー・売却期日履歴・鑑定評価要項
+- **危険キーワード25種を自動抽出** — 留置権・法定地上権・先順位賃借人・違反建築物・盲地・農地・持分売却 など
+- **周辺取引事例**(国土交通部 9種 公開API)+ 周辺落札統計
+- **有料API(登記簿等)は一切不使用** — 無料運営
+- スタック: Python クローラー(httpx async)→ Supabase(PostgreSQL + PostGIS + Storage)→ Next.js 16 on Vercel。地図タイルは OpenFreeMap、外部時価データはサーバールートで proxy
+- 同じコードベースで日本 BIT(`bit.courts.go.jp`) 対応を準備中 — ヘッダー [한국 | 日本] トグルは既に公開済み
+
 ---
 
 ## 무엇을 할 수 있나
@@ -79,7 +123,7 @@ KAKAO_REST_API_KEY=<32자>              # 필요시 server-side
 
 ### 3. DB 마이그레이션
 
-[supabase/migrations/](supabase/migrations/) 의 `0001_init.sql` ~ `0007_normalize_sgg_codes.sql` 을 순서대로 Supabase Dashboard SQL Editor에 붙여 Run.
+[supabase/migrations/](supabase/migrations/) 의 `0001_init.sql` ~ `0011_kr_risk_flags.sql` 을 순서대로 Supabase Dashboard SQL Editor에 붙여 Run.
 
 요약:
 - `0001_init`: 핵심 테이블 (courts, regions, usage_codes, cases, properties, sale_dates, photos, raw_responses, crawl_runs, dead_letters) + PostGIS
@@ -89,6 +133,10 @@ KAKAO_REST_API_KEY=<32자>              # 필요시 server-side
 - `0005_auction_results`: 매각결과 캐시 + 통계 view
 - `0006_fix_sgg_pk`: `regions_sgg` 복합키 PK
 - `0007_normalize_sgg_codes`: 같은 이름 중복 sgg 코드 합치기
+- `0008_backfill_sale_dates`: 매각기일 이력 백필 보조
+- `0009_jp_init`: 일본 BIT 초기 스키마 (한·일 동거)
+- `0010_jp_storage`: 일본 매물 사진 storage 버킷 + 정책
+- `0011_kr_risk_flags`: `properties.risk_flags text[]` 컬럼 + GIN 인덱스
 
 ### 4. 첫 적재 (~6시간, 대부분은 detail 백필)
 
@@ -216,4 +264,5 @@ auction-photos bucket                        MapLibre + 외부 API
 
 ## 라이선스 / 주의
 
-본 서비스는 **공식 사이트 데이터를 표시하는 보조 도구**입니다. 입찰 전 반드시 **courtauction.go.kr 공식 사이트의 매각물건명세서·현황조사서·감정평가서**를 직접 확인하세요. 자동 추출된 위험 배지·말소기준권리는 보조 정보일 뿐 법적 효력은 없습니다.
+- **라이선스**: [MIT](LICENSE) — 자유로운 사용·수정·배포 (저작권 표시 유지)
+- 본 서비스는 **공식 사이트 데이터를 표시하는 보조 도구**입니다. 입찰 전 반드시 **courtauction.go.kr 공식 사이트의 매각물건명세서·현황조사서·감정평가서**를 직접 확인하세요. 자동 추출된 위험 배지·말소기준권리는 보조 정보일 뿐 법적 효력은 없습니다.
