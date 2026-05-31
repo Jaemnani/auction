@@ -326,6 +326,9 @@ class Store:
             "usage_lcl_cd": _usage_code(row.get("lclsUtilCd")),
             "usage_mcl_cd": _usage_code(row.get("mclsUtilCd")),
             "usage_scl_cd": _usage_code(row.get("sclsUtilCd")),
+            # 사이트 한글 분류 — '아파트' '오피스텔' '단독주택' 등 20종.
+            # mcl/scl 마스터 부재 우회: search 응답이 직접 한글명 제공.
+            "usage_nm": _str(row.get("dspslUsgNm")),
             "sd_code": _str(row.get("daepyoSidoCd")),
             "sgg_code": _str(row.get("daepyoSiguCd") or row.get("daepyoSggCd")),
             "emd_code": _str(row.get("daepyoDongCd") or row.get("daepyoEmdCd")),
@@ -386,6 +389,7 @@ class Store:
                 "usage_lcl_cd": _usage_code(r.get("lclsUtilCd")),
                 "usage_mcl_cd": _usage_code(r.get("mclsUtilCd")),
                 "usage_scl_cd": _usage_code(r.get("sclsUtilCd")),
+                "usage_nm": _str(r.get("dspslUsgNm")),
                 "sd_code": _str(r.get("daepyoSidoCd")),
                 "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
                 "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
@@ -493,6 +497,7 @@ class Store:
                 "usage_lcl_cd": _usage_code(r.get("lclsUtilCd")),
                 "usage_mcl_cd": _usage_code(r.get("mclsUtilCd")),
                 "usage_scl_cd": _usage_code(r.get("sclsUtilCd")),
+                "usage_nm": _str(r.get("dspslUsgNm")),
                 "sd_code": _str(r.get("daepyoSidoCd")),
                 "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
                 "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),

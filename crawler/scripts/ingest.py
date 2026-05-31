@@ -610,6 +610,148 @@ async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
     print(f"\n[done] backfill-risk-flags → updated={n_updated}, seen={n_seen} ({elapsed:.1f}s)")
 
 
+# ---------- backfill derived_category ----------
+
+async def cmd_backfill_categories(args: argparse.Namespace) -> None:
+    """파생 카테고리 (전원주택/도심단독/농가/별장) 일괄 분류.
+
+    usage_nm 이 단독주택 류이면서 derived_category가 비어있는 매물 대상.
+    sgg_name 은 regions_sgg 에서 한 번에 dict 로 미리 lookup (도시/외곽 판단).
+    --force: 기존 derived_category가 있어도 재계산.
+    """
+    from courtauction.derived_category import derive_categories  # noqa: E402
+
+    store = Store()
+    run_id = store.start_run("backfill_categories", {"force": bool(args.force)})
+    started = time.monotonic()
+
+    # sgg lookup (sd+code → name) — 178개 row, 한 번에 dict.
+    sgg_rows = (
+        store.sb.table("regions_sgg")
+        .select("sd_code,code,name")
+        .execute().data or []
+    )
+    sgg_name_by_pair: dict[tuple[str, str], str] = {
+        (r["sd_code"], r["code"]): r["name"] for r in sgg_rows
+    }
+
+    n_updated = 0
+    n_seen = 0
+    page_size = max(50, int(args.batch))
+    last_id: str | None = None
+
+    try:
+        while True:
+            q = (
+                store.sb.table("properties")
+                .select(
+                    "id, usage_nm, sd_code, sgg_code, conv_addr, road_addr, "
+                    "building_summary, derived_category"
+                )
+                .not_.is_("usage_nm", "null")
+                .order("id")
+                .limit(page_size)
+            )
+            if last_id:
+                q = q.gt("id", last_id)
+            if not args.force:
+                # derived_category 빈 array 만
+                q = q.eq("derived_category", "{}")
+            if args.limit and n_seen >= args.limit:
+                break
+            res = q.execute()
+            rows = res.data or []
+            if not rows:
+                break
+
+            for r in rows:
+                n_seen += 1
+                last_id = r["id"]
+                sgg_name = sgg_name_by_pair.get(
+                    (r.get("sd_code") or "", r.get("sgg_code") or "")
+                )
+                cats = derive_categories(r, sgg_name=sgg_name)
+                prev = r.get("derived_category") or []
+                if sorted(prev) == sorted(cats):
+                    continue  # 변경 없음
+                store.sb.table("properties").update(
+                    {"derived_category": cats}
+                ).eq("id", r["id"]).execute()
+                n_updated += 1
+                if n_updated % 200 == 0:
+                    print(f"  ... {n_updated} updated (seen {n_seen})")
+
+            if args.limit and n_seen >= args.limit:
+                break
+
+        totals = {"updated": n_updated, "seen": n_seen}
+        store.finish_run(run_id, totals=totals)
+        elapsed = time.monotonic() - started
+        print(f"\n[done] backfill-categories → updated={n_updated}, "
+              f"seen={n_seen} ({elapsed:.1f}s)")
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        raise
+
+
+# ---------- backfill usage_nm (one-shot — search_row.dspslUsgNm → properties.usage_nm) ----------
+
+async def cmd_backfill_usage_nm(args: argparse.Namespace) -> None:
+    """기존 매물의 search_row.dspslUsgNm 을 properties.usage_nm 으로 복사.
+
+    신규 매물은 store.upsert_search_row 가 자동 채움. 이 명령은 0013 마이그레이션
+    직후 1회용 — 기존 19k+ 매물 대상.
+    """
+    store = Store()
+    run_id = store.start_run("backfill_usage_nm", {})
+    started = time.monotonic()
+
+    n_updated = 0
+    n_seen = 0
+    page_size = max(500, int(args.batch))
+    last_id: str | None = None
+
+    try:
+        while True:
+            q = (
+                store.sb.table("properties")
+                .select("id, search_row->>dspslUsgNm")
+                .is_("usage_nm", "null")
+                .not_.is_("search_row", "null")
+                .order("id")
+                .limit(page_size)
+            )
+            if last_id:
+                q = q.gt("id", last_id)
+            res = q.execute()
+            rows = res.data or []
+            if not rows:
+                break
+
+            for r in rows:
+                n_seen += 1
+                last_id = r["id"]
+                usg = r.get("dspslUsgNm")
+                if not usg:
+                    continue
+                store.sb.table("properties").update(
+                    {"usage_nm": usg}
+                ).eq("id", r["id"]).execute()
+                n_updated += 1
+
+            if n_updated % 1000 == 0 and n_updated > 0:
+                print(f"  ... {n_updated} updated (seen {n_seen})")
+
+        totals = {"updated": n_updated, "seen": n_seen}
+        store.finish_run(run_id, totals=totals)
+        elapsed = time.monotonic() - started
+        print(f"\n[done] backfill-usage-nm → updated={n_updated}, "
+              f"seen={n_seen} ({elapsed:.1f}s)")
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        raise
+
+
 # ---------- reverse geocoding (Kakao Local) ----------
 
 async def cmd_reverse_geocode(args: argparse.Namespace) -> None:
@@ -829,6 +971,19 @@ def main() -> None:
                          help="search_row의 도로명/지번 주소를 properties.road_addr/lot_addr로 채움")
     p_a.add_argument("--limit", type=int, default=10000)
     p_a.set_defaults(func=cmd_backfill_addrs)
+
+    p_un = sub.add_parser("backfill-usage-nm",
+                          help="기존 매물의 search_row.dspslUsgNm → properties.usage_nm 복사 (0013 직후 1회)")
+    p_un.add_argument("--batch", type=int, default=500)
+    p_un.set_defaults(func=cmd_backfill_usage_nm)
+
+    p_dc = sub.add_parser("backfill-categories",
+                          help="derived_category 일괄 계산 (전원주택/도심단독/농가/별장)")
+    p_dc.add_argument("--batch", type=int, default=200)
+    p_dc.add_argument("--limit", type=int, default=None)
+    p_dc.add_argument("--force", action="store_true",
+                      help="기존 derived_category 있어도 재계산")
+    p_dc.set_defaults(func=cmd_backfill_categories)
 
     p_rf = sub.add_parser("backfill-risk-flags",
         help="detail_result를 분석해 risk_flags 컬럼 채움 (체크박스 필터용)")
