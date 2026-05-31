@@ -615,27 +615,41 @@ async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
 async def cmd_backfill_categories(args: argparse.Namespace) -> None:
     """파생 카테고리 (전원주택/도심단독/농가/별장) 일괄 분류.
 
-    usage_nm 이 단독주택 류이면서 derived_category가 비어있는 매물 대상.
-    sgg_name 은 regions_sgg 에서 한 번에 dict 로 미리 lookup (도시/외곽 판단).
+    1) 룰 엔진(derived_category.derive_categories) — 무료, 모든 매물 대상.
+    2) --llm 옵션: 룰이 미분류한 단독·다가구 매물에 Gemini Flash Lite 보강.
+       각 매물 ~$0.00004. 384건 ≈ $0.014.
     --force: 기존 derived_category가 있어도 재계산.
     """
-    from courtauction.derived_category import derive_categories  # noqa: E402
+    from courtauction.derived_category import (  # noqa: E402
+        derive_categories, SINGLE_HOUSE_USG_NMS,
+    )
+
+    classifier = None
+    if args.llm:
+        from llm import GeminiClassifier  # noqa: E402
+        classifier = GeminiClassifier()
+        print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
+              "— 룰 미분류 단독·다가구만 호출")
 
     store = Store()
-    run_id = store.start_run("backfill_categories", {"force": bool(args.force)})
+    run_id = store.start_run("backfill_categories",
+                              {"force": bool(args.force), "llm": bool(args.llm)})
     started = time.monotonic()
 
-    # sgg lookup (sd+code → name) — 178개 row, 한 번에 dict.
+    # sgg/sd lookup (한 번에 dict).
     sgg_rows = (
-        store.sb.table("regions_sgg")
-        .select("sd_code,code,name")
+        store.sb.table("regions_sgg").select("sd_code,code,name")
         .execute().data or []
     )
     sgg_name_by_pair: dict[tuple[str, str], str] = {
         (r["sd_code"], r["code"]): r["name"] for r in sgg_rows
     }
+    sd_rows = store.sb.table("regions_sd").select("code,name").execute().data or []
+    sd_name_by_code: dict[str, str] = {r["code"]: r["name"] for r in sd_rows}
 
-    n_updated = 0
+    n_rule_updated = 0
+    n_llm_called = 0
+    n_llm_updated = 0
     n_seen = 0
     page_size = max(50, int(args.batch))
     last_id: str | None = None
@@ -646,7 +660,7 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                 store.sb.table("properties")
                 .select(
                     "id, usage_nm, sd_code, sgg_code, conv_addr, road_addr, "
-                    "building_summary, derived_category"
+                    "lot_addr, area_summary, building_summary, derived_category"
                 )
                 .not_.is_("usage_nm", "null")
                 .order("id")
@@ -655,7 +669,6 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
             if last_id:
                 q = q.gt("id", last_id)
             if not args.force:
-                # derived_category 빈 array 만
                 q = q.eq("derived_category", "{}")
             if args.limit and n_seen >= args.limit:
                 break
@@ -667,28 +680,69 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
             for r in rows:
                 n_seen += 1
                 last_id = r["id"]
-                sgg_name = sgg_name_by_pair.get(
-                    (r.get("sd_code") or "", r.get("sgg_code") or "")
-                )
+                sd = r.get("sd_code") or ""
+                sgg = r.get("sgg_code") or ""
+                sgg_name = sgg_name_by_pair.get((sd, sgg))
+                sd_name = sd_name_by_code.get(sd, "")
+
                 cats = derive_categories(r, sgg_name=sgg_name)
+                via_llm = False
+
+                # 룰 미분류 + 단독·다가구 + LLM 활성 → Gemini 호출
+                if (not cats and classifier is not None
+                        and r.get("usage_nm") in SINGLE_HOUSE_USG_NMS):
+                    # dspslGdsRmk 단건 lazy fetch (jsonb path 단건은 timeout 없음)
+                    try:
+                        det = (store.sb.table("properties")
+                               .select("detail_result->dspslGdsDxdyInfo->>dspslGdsRmk")
+                               .eq("id", r["id"]).maybe_single().execute())
+                        rmk = ((det.data or {}).get("dspslGdsRmk") or "") if det else ""
+                    except Exception:
+                        rmk = ""
+                    llm_out = await asyncio.to_thread(
+                        classifier.classify, r,
+                        sd_name=sd_name, sgg_name=sgg_name or "", dspslGdsRmk=rmk,
+                    )
+                    n_llm_called += 1
+                    cats = llm_out.get("categories") or []
+                    if cats:
+                        via_llm = True
+                        n_llm_updated += 1
+
                 prev = r.get("derived_category") or []
                 if sorted(prev) == sorted(cats):
                     continue  # 변경 없음
+
                 store.sb.table("properties").update(
                     {"derived_category": cats}
                 ).eq("id", r["id"]).execute()
-                n_updated += 1
-                if n_updated % 200 == 0:
-                    print(f"  ... {n_updated} updated (seen {n_seen})")
+
+                if not via_llm and cats:
+                    n_rule_updated += 1
+
+                done = n_rule_updated + n_llm_updated
+                if done > 0 and done % 100 == 0:
+                    print(f"  ... rule={n_rule_updated} llm={n_llm_updated} "
+                          f"(seen {n_seen}, llm_called {n_llm_called})")
 
             if args.limit and n_seen >= args.limit:
                 break
 
-        totals = {"updated": n_updated, "seen": n_seen}
+        totals = {
+            "updated_rule": n_rule_updated,
+            "updated_llm": n_llm_updated,
+            "llm_called": n_llm_called,
+            "seen": n_seen,
+        }
+        if classifier:
+            totals["llm_cost"] = classifier.cost_estimate()
         store.finish_run(run_id, totals=totals)
         elapsed = time.monotonic() - started
-        print(f"\n[done] backfill-categories → updated={n_updated}, "
-              f"seen={n_seen} ({elapsed:.1f}s)")
+        print(f"\n[done] backfill-categories → rule={n_rule_updated}, "
+              f"llm={n_llm_updated}/{n_llm_called} called, seen={n_seen} "
+              f"({elapsed:.1f}s)")
+        if classifier:
+            print(f"  LLM cost: {classifier.cost_estimate()}")
     except Exception as e:
         store.finish_run(run_id, status="failed", error=str(e))
         raise
@@ -708,14 +762,16 @@ async def cmd_backfill_usage_nm(args: argparse.Namespace) -> None:
 
     n_updated = 0
     n_seen = 0
-    page_size = max(500, int(args.batch))
+    # search_row 통째 fetch + Python 추출 — PostgREST jsonb path select 는
+    # 19k row 에서 statement timeout (>8s) 발생. 페이로드 크지만 안전.
+    page_size = min(200, max(50, int(args.batch)))
     last_id: str | None = None
 
     try:
         while True:
             q = (
                 store.sb.table("properties")
-                .select("id, search_row->>dspslUsgNm")
+                .select("id, search_row")
                 .is_("usage_nm", "null")
                 .not_.is_("search_row", "null")
                 .order("id")
@@ -731,7 +787,8 @@ async def cmd_backfill_usage_nm(args: argparse.Namespace) -> None:
             for r in rows:
                 n_seen += 1
                 last_id = r["id"]
-                usg = r.get("dspslUsgNm")
+                sr = r.get("search_row") or {}
+                usg = sr.get("dspslUsgNm") if isinstance(sr, dict) else None
                 if not usg:
                     continue
                 store.sb.table("properties").update(
@@ -739,7 +796,7 @@ async def cmd_backfill_usage_nm(args: argparse.Namespace) -> None:
                 ).eq("id", r["id"]).execute()
                 n_updated += 1
 
-            if n_updated % 1000 == 0 and n_updated > 0:
+            if n_seen % 1000 == 0 and n_seen > 0:
                 print(f"  ... {n_updated} updated (seen {n_seen})")
 
         totals = {"updated": n_updated, "seen": n_seen}
@@ -983,6 +1040,9 @@ def main() -> None:
     p_dc.add_argument("--limit", type=int, default=None)
     p_dc.add_argument("--force", action="store_true",
                       help="기존 derived_category 있어도 재계산")
+    p_dc.add_argument("--llm", action="store_true",
+                      help="룰 미분류 단독·다가구에 Gemini Flash Lite 보강 "
+                           "(GEMINI_API_KEY 필요, 매물당 ~$0.00004)")
     p_dc.set_defaults(func=cmd_backfill_categories)
 
     p_rf = sub.add_parser("backfill-risk-flags",

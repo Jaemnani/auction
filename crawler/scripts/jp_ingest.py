@@ -388,6 +388,62 @@ async def cmd_backfill_details_all(args: argparse.Namespace) -> None:
     print(f"DONE: {n_ok} ok / {n_fail} fail")
 
 
+# ---------- backfill derived_category (일본) ----------
+
+async def cmd_backfill_categories(args: argparse.Namespace) -> None:
+    """일본 매물 derived_category 일괄 계산 (別荘/空き家/리조트/離島).
+
+    LLM 보강은 추후 — 1차는 룰만 (한국 패턴과 다르게 일본은 sale_cls 표준 분류
+    있어서 derived는 보조 역할).
+    --force: 기존 derived_category 있어도 재계산.
+    """
+    from bit.derived_category import derive_categories  # noqa: E402
+
+    store = BitStore()
+    n_updated = 0
+    n_seen = 0
+    page_size = max(50, int(args.batch))
+    last_id: str | None = None
+
+    while True:
+        q = (
+            store.sb.table("jp_properties")
+            .select("sale_unit_id, sale_cls, address_text, "
+                    "prefecture_code, derived_category")
+            .order("sale_unit_id")
+            .limit(page_size)
+        )
+        if last_id:
+            q = q.gt("sale_unit_id", last_id)
+        if not args.force:
+            q = q.eq("derived_category", "{}")
+        if args.limit and n_seen >= args.limit:
+            break
+        res = q.execute()
+        rows = res.data or []
+        if not rows:
+            break
+
+        for r in rows:
+            n_seen += 1
+            last_id = r["sale_unit_id"]
+            cats = derive_categories(r)
+            prev = r.get("derived_category") or []
+            if sorted(prev) == sorted(cats):
+                continue
+            store.sb.table("jp_properties").update(
+                {"derived_category": cats}
+            ).eq("sale_unit_id", r["sale_unit_id"]).execute()
+            n_updated += 1
+            if n_updated % 100 == 0:
+                print(f"  ... {n_updated} updated (seen {n_seen})")
+
+        if args.limit and n_seen >= args.limit:
+            break
+
+    print(f"\n[done] jp backfill-categories → updated={n_updated}, seen={n_seen}")
+
+
 # ---------- detail ----------
 
 async def cmd_detail(args: argparse.Namespace) -> None:
@@ -482,6 +538,13 @@ def main() -> None:
     s.add_argument("--block", help="auto if omitted")
     s.add_argument("--save-html", help="save raw HTML to path")
     s.set_defaults(fn=cmd_detail)
+
+    s = sub.add_parser("backfill-categories",
+                       help="derived_category 일괄 계산 (別荘/空き家/리조트/離島)")
+    s.add_argument("--batch", type=int, default=500)
+    s.add_argument("--limit", type=int, default=None)
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_backfill_categories)
 
     args = p.parse_args()
     asyncio.run(_run_with_tracking(args))
