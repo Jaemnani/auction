@@ -111,6 +111,18 @@ def _str(v: Any) -> str | None:
     return str(v).strip() or None
 
 
+# 용도 코드 정규화 — courtauction이 일부 매물에서 보내는 무효 값을 NULL로.
+# 예: 어떤 차량 매물의 lclsUtilCd가 "00000"으로 오면 모든 lcl 필터에 안 잡힘.
+# 정상 lcl: 10000(토지) / 20000(건물) / 30000(차량) / 40000(기타).
+_INVALID_USAGE = {"00000", "0", ""}
+
+def _usage_code(v: Any) -> str | None:
+    s = _str(v)
+    if s is None or s in _INVALID_USAGE:
+        return None
+    return s
+
+
 def _chunked(seq: list, size: int) -> Iterable[list]:
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
@@ -311,9 +323,9 @@ class Store:
             "sale_date": _to_date(row.get("maeGiil")),
             "sale_decision_date": _to_date(row.get("maegyuljGiil")),
             "status_cd": _str(row.get("maemulStatCd") or row.get("statCd")),
-            "usage_lcl_cd": _str(row.get("lclsUtilCd")),
-            "usage_mcl_cd": _str(row.get("mclsUtilCd")),
-            "usage_scl_cd": _str(row.get("sclsUtilCd")),
+            "usage_lcl_cd": _usage_code(row.get("lclsUtilCd")),
+            "usage_mcl_cd": _usage_code(row.get("mclsUtilCd")),
+            "usage_scl_cd": _usage_code(row.get("sclsUtilCd")),
             "sd_code": _str(row.get("daepyoSidoCd")),
             "sgg_code": _str(row.get("daepyoSiguCd") or row.get("daepyoSggCd")),
             "emd_code": _str(row.get("daepyoDongCd") or row.get("daepyoEmdCd")),
@@ -371,9 +383,9 @@ class Store:
                 "sale_date": _to_date(r.get("maeGiil")),
                 "result_status_cd": _str(r.get("mulStatcd")),
                 "in_progress_yn": _str(r.get("mulJinYn")),
-                "usage_lcl_cd": _str(r.get("lclsUtilCd")),
-                "usage_mcl_cd": _str(r.get("mclsUtilCd")),
-                "usage_scl_cd": _str(r.get("sclsUtilCd")),
+                "usage_lcl_cd": _usage_code(r.get("lclsUtilCd")),
+                "usage_mcl_cd": _usage_code(r.get("mclsUtilCd")),
+                "usage_scl_cd": _usage_code(r.get("sclsUtilCd")),
                 "sd_code": _str(r.get("daepyoSidoCd")),
                 "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
                 "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
@@ -478,9 +490,9 @@ class Store:
                 "sale_date": _to_date(r.get("maeGiil")),
                 "sale_decision_date": _to_date(r.get("maegyuljGiil")),
                 "status_cd": _str(r.get("maemulStatCd") or r.get("statCd")),
-                "usage_lcl_cd": _str(r.get("lclsUtilCd")),
-                "usage_mcl_cd": _str(r.get("mclsUtilCd")),
-                "usage_scl_cd": _str(r.get("sclsUtilCd")),
+                "usage_lcl_cd": _usage_code(r.get("lclsUtilCd")),
+                "usage_mcl_cd": _usage_code(r.get("mclsUtilCd")),
+                "usage_scl_cd": _usage_code(r.get("sclsUtilCd")),
                 "sd_code": _str(r.get("daepyoSidoCd")),
                 "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
                 "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
