@@ -166,12 +166,26 @@ const ROADMAP = [
   { phase: "8", label: "三点セット PDF · 座標 · マップ", done: true },
 ];
 
+// has_three_set_pdf 통계 (전체·보유) — 필터 토글 옆 비율 표시용.
+// head:true 로 row 없이 count 만 가져옴 — ISR 캐시(revalidate=300)에 합산.
+async function fetchPdfStats(): Promise<{ total: number; withPdf: number }> {
+  const [t, w] = await Promise.all([
+    supabase.from("jp_properties").select("sale_unit_id", { count: "exact", head: true }),
+    supabase.from("jp_properties").select("sale_unit_id", { count: "exact", head: true })
+      .eq("detail_result->>has_three_set_pdf", "true"),
+  ]);
+  return { total: t.count ?? 0, withPdf: w.count ?? 0 };
+}
+
 export default async function JpListingPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await props.searchParams;
   const filters = parseJpFilters(sp);
-  const { rows, count, courts, prefs } = await fetchJp(filters);
+  const [{ rows, count, courts, prefs }, pdfStats] = await Promise.all([
+    fetchJp(filters),
+    fetchPdfStats(),
+  ]);
   const totalPages = Math.max(1, Math.ceil(count / filters.page_size));
 
   const linkCls = (active: boolean, disabled?: boolean) =>
@@ -205,7 +219,7 @@ export default async function JpListingPage(props: {
       </section>
 
       {/* 필터 — 목록·지도 공통 컴포넌트 */}
-      <JpFilterBar action="/jp" filters={filters} prefs={prefs} courts={courts} />
+      <JpFilterBar action="/jp" filters={filters} prefs={prefs} courts={courts} pdfStats={pdfStats} />
 
       {/* リスト */}
       <Card>

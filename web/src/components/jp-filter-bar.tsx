@@ -12,6 +12,9 @@ type Props = {
   filters: JpFilters;
   prefs: { code: string; name: string }[];
   courts: { code: string; name: string }[];
+  /** 三点セット PDF 통계 — 토글 옆에 비율 표시 (현재 1069/1073 ≈ 99.6%로 거의 전부).
+   *  사용자가 "필터 효과 없음 → 오류"로 인식하는 것 방지. */
+  pdfStats?: { total: number; withPdf: number };
 };
 
 /**
@@ -19,8 +22,11 @@ type Props = {
  * Server component (form submit으로 URL 변경) — 클라이언트 JS 불필요.
  * 라벨은 lib/i18n으로 자동 일본어 (path /jp/* 컨텍스트).
  */
-export async function JpFilterBar({ action, filters, prefs, courts }: Props) {
+export async function JpFilterBar({ action, filters, prefs, courts, pdfStats }: Props) {
   const t = await getT();
+  const pdfRatio = pdfStats && pdfStats.total > 0
+    ? Math.round((pdfStats.withPdf / pdfStats.total) * 1000) / 10  // 소수점 1자리
+    : null;
   return (
     <Card>
       <CardContent className="p-3">
@@ -93,6 +99,12 @@ export async function JpFilterBar({ action, filters, prefs, courts }: Props) {
               <input type="checkbox" name="has_pdf" value="1"
                      defaultChecked={filters.has_pdf === "1"} />
               <span>{t("filter.has_pdf")}</span>
+              {pdfStats && (
+                <span className="text-muted-foreground">
+                  ({pdfStats.withPdf.toLocaleString()}/{pdfStats.total.toLocaleString()}
+                  {pdfRatio != null ? ` · ${pdfRatio}%` : ""})
+                </span>
+              )}
             </label>
             <label className="inline-flex items-center gap-1 cursor-pointer select-none">
               <input type="checkbox" name="with_geo" value="1"

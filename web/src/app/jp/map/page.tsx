@@ -87,12 +87,26 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
   };
 }
 
+// has_three_set_pdf 통계 (전체·보유) — 토글 옆 비율 표시용.
+// head:true 로 row 없이 count 만 가져옴 — 부담 없음. ISR 캐시(부모 page revalidate)에 합산.
+async function fetchPdfStats(): Promise<{ total: number; withPdf: number }> {
+  const [t, w] = await Promise.all([
+    supabase.from("jp_properties").select("sale_unit_id", { count: "exact", head: true }),
+    supabase.from("jp_properties").select("sale_unit_id", { count: "exact", head: true })
+      .eq("detail_result->>has_three_set_pdf", "true"),
+  ]);
+  return { total: t.count ?? 0, withPdf: w.count ?? 0 };
+}
+
 export default async function JpMapPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await props.searchParams;
   const filters = parseJpFilters(sp);
-  const { rows, courts, prefs } = await fetchMapRows(filters);
+  const [{ rows, courts, prefs }, pdfStats] = await Promise.all([
+    fetchMapRows(filters),
+    fetchPdfStats(),
+  ]);
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
@@ -110,7 +124,7 @@ export default async function JpMapPage(props: {
       </section>
 
       {/* 필터 — 목록과 동일한 컴포넌트 */}
-      <JpFilterBar action="/jp/map" filters={filters} prefs={prefs} courts={courts} />
+      <JpFilterBar action="/jp/map" filters={filters} prefs={prefs} courts={courts} pdfStats={pdfStats} />
 
       <JpPropertyMap rows={rows} />
     </div>
