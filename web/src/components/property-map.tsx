@@ -30,13 +30,34 @@ const KOREA_BOUNDS: [[number, number], [number, number]] = [
 const KOREA_CENTER: [number, number] = [127.8, 36.5];
 const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
+/** usage_lcl_cd 별 마커 색.
+ * 사용자가 lcl 필터를 적용 안 한 상태에서도 차량/토지/건물이 한눈에 구분되도록.
+ * 4종 + null. legend와 1:1 매칭. */
+const LCL_COLORS: Record<string, { color: string; label: string }> = {
+  "10000": { color: "#16a34a", label: "토지" },          // green-600
+  "20000": { color: "#dc2626", label: "건물" },          // red-600 (기존)
+  "30000": { color: "#f97316", label: "차량·운송장비" }, // orange-500
+  "40000": { color: "#737373", label: "기타" },          // neutral-500
+};
+const LCL_UNKNOWN = { color: "#525252", label: "미분류" }; // neutral-600
+
+function markerColor(lclCd: string | null | undefined): string {
+  return (lclCd && LCL_COLORS[lclCd]?.color) || LCL_UNKNOWN.color;
+}
+
+export type ActiveFilter = { label: string; value: string };
+
 type Props = {
   rows: Property[];
   /** true면 viewport 이동 시 자동 새로고침, false면 버튼 노출 */
   autoRefresh?: boolean;
+  /** 활성 필터 — 지도 상단에 chip 으로 표시.
+   *  사용자가 어떤 필터가 적용 중인지 즉시 인식 가능 (특히 "lcl 필터 안 켰는데
+   *  건물만 보고 싶었다" 같은 UX 오해 방지). */
+  activeFilters?: ActiveFilter[];
 };
 
-export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
+export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilters = [] }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -260,7 +281,7 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
         </div>
       `;
       const popup = new Popup({ offset: 18, closeButton: true, maxWidth: "320px" }).setHTML(html);
-      const marker = new Marker({ color: "#dc2626" })
+      const marker = new Marker({ color: markerColor(p.usage_lcl_cd) })
         .setLngLat([lng, lat])
         .setPopup(popup)
         .addTo(map);
@@ -276,13 +297,49 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false }: Props) {
     // unit 변경 시에도 popup 재생성 — popup HTML이 unit에 의존
   }, [pointsKey, unit]);
 
+  // 어떤 lcl이 결과에 존재하는지 — legend에서 해당 항목만 굵게 강조
+  const presentLcls = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of points) if (p.usage_lcl_cd) s.add(p.usage_lcl_cd);
+    return s;
+  }, [points]);
+
   return (
     <div className="relative">
+      {/* 활성 필터 칩 — 지도 상단 (사용자가 어떤 필터로 좁혔는지 즉시 보임) */}
+      {activeFilters.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">필터:</span>
+          {activeFilters.map((f, i) => (
+            <span key={i}
+                  className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
+              <span className="text-muted-foreground">{f.label}</span>
+              <span className="font-medium">{f.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div
         ref={containerRef}
         style={{ width: "100%", height: "calc(100vh - 280px)", minHeight: 480 }}
         className="rounded-md border bg-muted/20 overflow-hidden"
       />
+
+      {/* 마커 색 legend — 좌하단 (lcl 필터 적용 안 한 상태에서도 한눈에 구분) */}
+      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-[11px] shadow-sm space-y-0.5">
+        <div className="text-muted-foreground font-medium text-[10px] uppercase tracking-wide mb-0.5">
+          마커 색
+        </div>
+        {Object.entries(LCL_COLORS).map(([code, { color, label }]) => (
+          <div key={code} className="flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
+            <span className={presentLcls.has(code) ? "font-medium" : "text-muted-foreground"}>
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
 
       {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}
       <div
