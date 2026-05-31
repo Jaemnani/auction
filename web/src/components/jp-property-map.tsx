@@ -8,7 +8,10 @@ const JAPAN_BOUNDS: [[number, number], [number, number]] = [
   [122.0, 24.0],
   [153.0, 46.0],
 ];
-const JAPAN_CENTER: [number, number] = [138.0, 36.5];
+// 지도 시작 위치 — 도쿄都庁. 일본 매물의 대부분이 関東권에 집중 → 도쿄에서 시작.
+// (이전엔 일본 중심 [138, 36.5] → 첫 화면이 太平洋 위로 보임)
+const DEFAULT_CENTER: [number, number] = [139.6917, 35.6895];
+const DEFAULT_ZOOM = 10;
 const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 export type JpMapRow = {
@@ -80,9 +83,9 @@ export function JpPropertyMap({ rows }: Props) {
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE_URL,
-      bounds: rows.length === 0 ? JAPAN_BOUNDS : undefined,
-      center: rows.length > 0 ? [rows[0].longitude, rows[0].latitude] : JAPAN_CENTER,
-      zoom: rows.length > 0 ? 10 : undefined,
+      // 항상 도쿄에서 시작 — 일본 매물 대부분이 関東권. 첫 화면에 즉시 마커 보임.
+      center: DEFAULT_CENTER,
+      zoom: DEFAULT_ZOOM,
       fitBoundsOptions: { padding: 40 },
       attributionControl: { compact: true },
     });

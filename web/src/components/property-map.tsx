@@ -23,11 +23,15 @@ function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): numb
 
 type CircleSel = { centerLng: number; centerLat: number; radiusM: number } | null;
 
+// 한국 영토 박스 (bbox 클라이언트 필터용 — KOREA_BOUNDS 는 이름만 유지).
 const KOREA_BOUNDS: [[number, number], [number, number]] = [
   [124.5, 33.0],
   [131.9, 38.7],
 ];
-const KOREA_CENTER: [number, number] = [127.8, 36.5];
+// 지도 시작 위치 — 서울시청. 매물이 많은 지역에서 시작하면 즉시 마커 보임.
+// (이전엔 한국 전체 중심 [127.8, 36.5] → 첫 화면이 비어 보였음)
+const DEFAULT_CENTER: [number, number] = [126.9784, 37.5666];
+const DEFAULT_ZOOM = 11;
 const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 /** usage_lcl_cd 별 마커 색.
@@ -132,11 +136,11 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE_URL,
-      bounds: points.length === 0 ? KOREA_BOUNDS : undefined,
-      center: points.length > 0
-        ? [points[0].longitude!, points[0].latitude!]
-        : KOREA_CENTER,
-      zoom: points.length > 0 ? 10 : undefined,
+      // 항상 서울에서 시작 (이전엔 매물 0건 시 전국 bounds로 fit → 첫 화면 비어보임).
+      // 매물이 있어도 첫 매물 위치 대신 서울 시작 — 사용자가 명시적으로 다른 지역
+      // 필터링했다면 후속 fitBounds로 자동 이동 가능 (현재는 안 함, 다음 단계).
+      center: DEFAULT_CENTER,
+      zoom: DEFAULT_ZOOM,
       fitBoundsOptions: { padding: 24 },
       attributionControl: { compact: true },
     });
