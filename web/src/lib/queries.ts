@@ -7,7 +7,7 @@ const LIST_PROPERTY_SELECT = `
   id, case_id, docid, maemul_ser, mokmul_ser,
   appraisal_amount, min_sale_price, current_sale_price, fail_count,
   sale_date, sale_decision_date, status_cd,
-  usage_lcl_cd, usage_mcl_cd, usage_scl_cd,
+  usage_lcl_cd, usage_mcl_cd, usage_scl_cd, usage_nm, derived_category,
   sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
   building_summary, area_summary, longitude, latitude, detail_synced_at,
   cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
@@ -71,6 +71,18 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
     }
   }
 
+  // 한글 용도명 다중 — 매물의 usage_nm 이 set 안에 있으면 포함.
+  // 한국 사이트의 dspslUsgNm 분류 (아파트/오피스텔/단독주택 등 20종) 그대로.
+  if (filters.usage_nm && filters.usage_nm.length > 0) {
+    q = q.in("usage_nm", filters.usage_nm);
+  }
+  // 파생 카테고리 다중 — derived_category 와 overlap (한 카테고리라도 매칭이면 포함).
+  if (filters.derived && filters.derived.length > 0) {
+    const safe = filters.derived.filter((c) => /^[a-z_]+$/.test(c));
+    if (safe.length > 0) {
+      q = q.overlaps("derived_category", safe);
+    }
+  }
   // 위험 플래그 제외 — exclude_flags 중 하나라도 risk_flags와 overlap이면 제외.
   // 주의: risk_flags가 NULL인 row(=detail 백필 전이거나 어떤 위험도 분석 안 된)는
   // "위험 없음"으로 간주해 결과에 **포함**해야 함. PostgreSQL의 NOT(NULL && X) = NULL

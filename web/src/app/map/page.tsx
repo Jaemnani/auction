@@ -44,6 +44,16 @@ function buildActiveFilters(
   if (f.addr_state === "with_road") out.push({ label: "도로명", value: "있음" });
   if (f.addr_state === "no_road")   out.push({ label: "도로명", value: "미수집" });
   if (f.exclude_flags?.length)      out.push({ label: "제외 키워드", value: `${f.exclude_flags.length}종` });
+  if (f.usage_nm?.length) {
+    out.push({ label: "세부분류", value: f.usage_nm.length === 1 ? f.usage_nm[0] : `${f.usage_nm.length}종` });
+  }
+  if (f.derived?.length) {
+    const labels: Record<string, string> = {
+      country_house: "전원주택", townhouse: "도심단독",
+      farm_house: "농가주택", vacation_home: "별장·펜션",
+    };
+    out.push({ label: "파생", value: f.derived.map((c) => labels[c] ?? c).join(", ") });
+  }
   return out;
 }
 

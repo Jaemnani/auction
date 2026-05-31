@@ -19,6 +19,39 @@ type Props = {
   initial: PropertyFilters;
 };
 
+/** 사이트의 한글 용도명(usage_nm = dspslUsgNm) 20종 — 카테고리 그룹화.
+ * UI에 chip 으로 노출, 사용자가 다중 선택. URL 직렬화는 '|' 구분 (값에 콤마 포함됨).
+ */
+const USAGE_NM_GROUPS: Array<{ title: string; items: string[] }> = [
+  {
+    title: "주거",
+    items: ["아파트", "오피스텔", "다세대", "연립주택", "연립주택,다세대,빌라", "빌라",
+            "단독주택", "단독주택다가구", "다가구주택"],
+  },
+  {
+    title: "상업·근린",
+    items: ["근린시설", "상가", "상가,오피스텔,근린시설"],
+  },
+  {
+    title: "토지",
+    items: ["대지", "전답", "임야", "대지,임야,전답"],
+  },
+  {
+    title: "차량·기타",
+    items: ["자동차", "자동차,중기", "중기", "기타"],
+  },
+];
+
+/** 파생 카테고리 — derived_category.py 의 ALL_CATEGORIES 와 동기화.
+ *  룰 엔진이 채움. 사용자 정의 분류 (사이트 기본 카테고리에 없음).
+ */
+const DERIVED_OPTIONS: Array<{ code: string; label: string; desc: string }> = [
+  { code: "country_house", label: "전원주택",  desc: "단독·다가구 + 외곽 sgg(군) 또는 전원/농가 키워드" },
+  { code: "townhouse",     label: "도심 단독", desc: "단독·다가구 + 광역시/인구 50만+ 일반시" },
+  { code: "farm_house",    label: "농가주택",  desc: "단독·다가구 + 농가/축사 키워드" },
+  { code: "vacation_home", label: "별장·펜션", desc: "단독·다가구 + 별장/펜션/산장 키워드" },
+];
+
 /** 패스 키워드 그룹 — risk_flags 코드와 1:1 매핑. */
 const RISK_GROUPS: Array<{ title: string; items: { code: string; label: string }[] }> = [
   {
@@ -150,6 +183,18 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     } else {
       params.delete("exclude_flags");
     }
+    // usage_nm — '|' 구분 (값 자체에 콤마 포함됨, e.g. "연립주택,다세대,빌라")
+    if (f.usage_nm && f.usage_nm.length > 0) {
+      params.set("usage_nm", f.usage_nm.join("|"));
+    } else {
+      params.delete("usage_nm");
+    }
+    // derived — 콤마 구분
+    if (f.derived && f.derived.length > 0) {
+      params.set("derived", f.derived.join(","));
+    } else {
+      params.delete("derived");
+    }
     params.delete("page");
     startTransition(() => router.push(`${pathname}?${params.toString()}`));
   }
@@ -165,7 +210,9 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     f.min_appraisal, f.max_appraisal, f.min_sale, f.max_sale,
     f.min_fail, f.max_fail, f.sale_from, f.sale_to,
   ].filter((v) => v !== undefined && v !== "" && v !== null).length
-    + (f.exclude_flags?.length ?? 0);
+    + (f.exclude_flags?.length ?? 0)
+    + (f.usage_nm?.length ?? 0)
+    + (f.derived?.length ?? 0);
 
   // 코드 → 한글 라벨 lookup (기본값: "전체")
   const nameOf = (code: string | undefined, list: Option[], placeholder = "전체") =>
@@ -342,6 +389,111 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
           </div>
         </div>
       )}
+
+      {/* 세부 분류 (사이트 한글 용도명 다중 선택) */}
+      <details className="pt-2 border-t" open={(f.usage_nm?.length ?? 0) > 0}>
+        <summary className="cursor-pointer text-sm font-medium select-none flex items-center gap-2">
+          <span>🏷️ 세부 분류</span>
+          {f.usage_nm && f.usage_nm.length > 0 && (
+            <span className="text-xs rounded bg-blue-100 text-blue-700 px-1.5 py-0.5">
+              {f.usage_nm.length}개 선택
+            </span>
+          )}
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            사이트 분류 (아파트·오피스텔·단독주택 등 20종)
+          </span>
+        </summary>
+        <div className="space-y-3 mt-3">
+          {USAGE_NM_GROUPS.map((g) => (
+            <div key={g.title}>
+              <div className="text-xs font-semibold text-muted-foreground mb-1.5">{g.title}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {g.items.map((nm) => {
+                  const active = f.usage_nm?.includes(nm) ?? false;
+                  return (
+                    <label
+                      key={nm}
+                      className={
+                        "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 text-xs transition " +
+                        (active
+                          ? "bg-blue-100 border-blue-300 text-blue-800"
+                          : "bg-card border-border hover:bg-muted")
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        className="hidden"
+                        checked={active}
+                        onChange={(e) => {
+                          const prev = f.usage_nm ?? [];
+                          const next = e.target.checked
+                            ? Array.from(new Set([...prev, nm]))
+                            : prev.filter((v) => v !== nm);
+                          set("usage_nm", next.length > 0 ? next : undefined);
+                        }}
+                      />
+                      <span>{active ? "✓" : "○"}</span>
+                      <span>{nm}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {/* 파생 카테고리 (전원주택/도심단독/농가/별장 — 룰 엔진 derived) */}
+      <details className="pt-2 border-t" open={(f.derived?.length ?? 0) > 0}>
+        <summary className="cursor-pointer text-sm font-medium select-none flex items-center gap-2">
+          <span>✨ 파생 카테고리</span>
+          {f.derived && f.derived.length > 0 && (
+            <span className="text-xs rounded bg-emerald-100 text-emerald-700 px-1.5 py-0.5">
+              {f.derived.length}개 선택
+            </span>
+          )}
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            룰 엔진 자동 분류 (단독·다가구 매물 대상)
+          </span>
+        </summary>
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          {DERIVED_OPTIONS.map((o) => {
+            const active = f.derived?.includes(o.code) ?? false;
+            return (
+              <label
+                key={o.code}
+                title={o.desc}
+                className={
+                  "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 text-xs transition " +
+                  (active
+                    ? "bg-emerald-100 border-emerald-300 text-emerald-800"
+                    : "bg-card border-border hover:bg-muted")
+                }
+              >
+                <input
+                  type="checkbox"
+                  className="hidden"
+                  checked={active}
+                  onChange={(e) => {
+                    const prev = f.derived ?? [];
+                    const next = e.target.checked
+                      ? Array.from(new Set([...prev, o.code]))
+                      : prev.filter((v) => v !== o.code);
+                    set("derived", next.length > 0 ? next : undefined);
+                  }}
+                />
+                <span>{active ? "✓" : "○"}</span>
+                <span>{o.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-muted-foreground mt-3 border-t pt-2">
+          분류는 ingest 시 자동. 기존 매물 일괄 분류는
+          <code className="bg-muted px-1 mx-1 rounded">crawler/scripts/ingest.py backfill-categories</code>
+          1회 실행 (마이그레이션 0013 적용 후).
+        </div>
+      </details>
 
       {/* 패스 키워드 — 위험 매물 제외 (advanced 토글과 독립적으로 항시 노출) */}
       <details className="pt-2 border-t" open={showAdvanced || (f.exclude_flags?.length ?? 0) > 0}>

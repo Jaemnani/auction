@@ -31,6 +31,8 @@ export type Property = {
   usage_lcl_cd: string | null;
   usage_mcl_cd: string | null;
   usage_scl_cd: string | null;
+  usage_nm: string | null;             // 사이트 한글 용도명 (아파트/오피스텔/단독주택 등 20종)
+  derived_category: string[] | null;   // 파생 카테고리 (country_house/townhouse/farm_house/vacation_home)
   sd_code: string | null;
   sgg_code: string | null;
   emd_code: string | null;
@@ -106,6 +108,8 @@ export type PropertyFilters = {
   sale_from?: string; // 매각기일 from
   sale_to?: string;
   exclude_flags?: string[];  // risk_flags 코드 — 매물의 risk_flags와 overlap 시 제외
+  usage_nm?: string[];       // 한국 한글 용도명 다중 선택 (아파트/오피스텔/단독주택...) — 매물의 usage_nm 이 set 중 하나면 포함
+  derived?: string[];        // 파생 카테고리 다중 선택 (country_house/townhouse...) — derived_category 와 overlap 시 포함
   page?: number;
   page_size?: number;
   sort?:

@@ -37,6 +37,18 @@ export function parseFiltersFromSearchParams(
       .map((s) => s.trim())
       .filter((s) => /^[a-z_]+$/.test(s));
   }
+  // usage_nm: 콤마 구분. 한글 + 영문 + 콤마 허용 (값 자체가 "연립주택,다세대,빌라" 같은 콤마 포함이라
+  // | 로 구분. 단일 URL 키 한 줄에 다중 한글 묶음.)
+  const un = get("usage_nm");
+  if (un) {
+    out.usage_nm = un.split("|").map((s) => s.trim()).filter(Boolean);
+  }
+  // derived: 콤마 구분, 영문/언더스코어만 (코드 화이트리스트)
+  const dv = get("derived");
+  if (dv) {
+    out.derived = dv.split(",").map((s) => s.trim())
+      .filter((s) => /^[a-z_]+$/.test(s));
+  }
   return out;
 }
 
