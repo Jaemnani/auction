@@ -470,3 +470,18 @@ class BitStore:
             [photo_row], on_conflict="property_id,seq",
         ).execute()
         return photo_row
+
+    # ---------- crawl runs (한국 store와 동일한 crawl_runs 테이블 공용) ----------
+
+    def start_run(self, job_type: str, params: dict | None = None) -> str:
+        r = self.sb.table("crawl_runs").insert(
+            {"job_type": job_type, "params": params or {}, "status": "running"}
+        ).execute()
+        return r.data[0]["id"]
+
+    def finish_run(self, run_id: str, totals: dict | None = None,
+                   *, status: str = "done", error: str | None = None) -> None:
+        self.sb.table("crawl_runs").update(
+            {"status": status, "totals": totals or {},
+             "finished_at": datetime.now(timezone.utc).isoformat(), "error": error}
+        ).eq("id", run_id).execute()

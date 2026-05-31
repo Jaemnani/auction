@@ -414,6 +414,28 @@ async def cmd_detail(args: argparse.Namespace) -> None:
 
 # ---------- main ----------
 
+async def _run_with_tracking(args: argparse.Namespace) -> None:
+    """모든 cmd_* 함수를 crawl_runs 추적으로 감싸기.
+
+    각 cmd 함수 자체는 건드리지 않고 main() 진입 직전에 한 번만 wrap.
+    한국 ingest는 함수별 inline 패턴이라 totals(pages/rows 등) 세밀,
+    일본은 1차로 wrapper만 — status/error 추적 가능하면 충분 (cron 검증 목적).
+    향후 totals가 필요하면 함수별 보강.
+    """
+    store = BitStore()
+    job_type = f"jp_{(args.cmd or 'unknown').replace('-', '_')}"
+    # argparse가 args에 fn(callable), cmd(str) 등 모두 담음 — JSON 직렬화 가능한 것만 params로
+    params = {k: v for k, v in vars(args).items()
+              if k != "fn" and isinstance(v, (str, int, float, bool, type(None)))}
+    run_id = store.start_run(job_type, params)
+    try:
+        await args.fn(args)
+        store.finish_run(run_id)
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        raise
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="jp_ingest")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -462,7 +484,7 @@ def main() -> None:
     s.set_defaults(fn=cmd_detail)
 
     args = p.parse_args()
-    asyncio.run(args.fn(args))
+    asyncio.run(_run_with_tracking(args))
 
 
 if __name__ == "__main__":
