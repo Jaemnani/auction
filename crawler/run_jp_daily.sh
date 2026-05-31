@@ -121,7 +121,15 @@ drain "photos" crawler/scripts/jp_ingest.py photos --limit "$PHOTO_LIMIT"
 # 4) 종결 매물 마킹 — BIT 검색에서 사라진 매물(낙찰/절차 정지)을 closed로 변경
 step "close-aged" crawler/scripts/jp_ingest.py close-aged --since "$RUN_SINCE_ISO"
 
-# 4) 30일 지난 로그 정리
+# 5) 파생 카테고리 (別荘/空き家/リゾート/離島) — 신규 戸建て 매물 자동 분류.
+#    GEMINI_API_KEY 있으면 룰 미분류 戸建て에 Gemini Flash Lite 보강.
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  step "backfill-categories (rule+LLM)" crawler/scripts/jp_ingest.py backfill-categories --llm
+else
+  step "backfill-categories (rule only)" crawler/scripts/jp_ingest.py backfill-categories
+fi
+
+# 6) 30일 지난 로그 정리
 find "$LOG_DIR" -name 'jp_daily_*.log' -mtime +30 -delete 2>/dev/null || true
 
 echo ""

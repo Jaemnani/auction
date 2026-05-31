@@ -149,3 +149,110 @@ class GeminiClassifier:
             "output_tokens": self.output_tokens,
             "cost_usd": round(cost, 6),
         }
+
+
+# ============================================================================
+# 일본 BIT 매물 분류기 — bit/derived_category.py 카테고리와 동기화
+# ============================================================================
+
+JP_VALID_CATEGORIES = {"bessou", "akiya", "rizoto", "tousho"}
+
+JP_CATEGORY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "categories": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": sorted(JP_VALID_CATEGORIES),
+            },
+        },
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["categories", "confidence", "reason"],
+}
+
+JP_PROMPT_TMPL = """日本の不動産競売物件の派生カテゴリを分類してください。
+
+カテゴリ (該当なしは空配列):
+- bessou: 別荘·山荘·リゾート·別邸
+- akiya: 空き家·古民家·中古戸建·廃屋
+- rizoto: リゾート地 (北海道·沖縄·軽井沢·箱根·熱海など休養地)
+- tousho: 離島 (沖縄県·離島)
+
+物件情報:
+- sale_cls: {sale_cls_label} (1=土地 / 2=戸建て / 3=マンション / 4=その他)
+- 都道府県: {pref_name} (code={pref_code})
+- 住所: {address_text}
+- 売却基準価額: {sale_standard_price} 円
+
+ルール:
+- 戸建て(sale_cls=2)以外は通常 categories: [] (沖縄=tousho は例外)
+- 一つの物件に複数カテゴリ可能 (例: bessou + rizoto)
+- confidence は 0~1
+- reason は日本語で一行
+"""
+
+
+class GeminiJpClassifier:
+    """일본 매물 derived_category 분류기. 한국 GeminiClassifier 와 동일 구조,
+    카테고리와 프롬프트만 일본어로."""
+
+    def __init__(self, cfg: GeminiConfig | None = None):
+        self.cfg = cfg or GeminiConfig()
+        api_key = self.cfg.api_key or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY required")
+        self.client = genai.Client(api_key=api_key)
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.requests = 0
+        self.errors = 0
+
+    def classify(self, prop: dict, *, pref_name: str = "") -> dict:
+        """일본 매물 1건 분류."""
+        prompt = JP_PROMPT_TMPL.format(
+            sale_cls_label=prop.get("sale_cls_label") or prop.get("sale_cls") or "",
+            pref_name=pref_name,
+            pref_code=prop.get("prefecture_code") or "",
+            address_text=(prop.get("address_text") or "")[:300],
+            sale_standard_price=prop.get("sale_standard_price") or "",
+        )
+        try:
+            r = self.client.models.generate_content(
+                model=self.cfg.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=JP_CATEGORY_SCHEMA,
+                    temperature=0.0,
+                ),
+            )
+            usage = getattr(r, "usage_metadata", None)
+            if usage:
+                self.input_tokens += getattr(usage, "prompt_token_count", 0) or 0
+                self.output_tokens += getattr(usage, "candidates_token_count", 0) or 0
+            self.requests += 1
+            text = (r.text or "").strip() or "{}"
+            out = json.loads(text)
+            cats = [c for c in (out.get("categories") or []) if c in JP_VALID_CATEGORIES]
+            return {
+                "categories": cats,
+                "confidence": float(out.get("confidence", 0.5) or 0.5),
+                "reason": str(out.get("reason", ""))[:200],
+            }
+        except Exception as e:
+            self.errors += 1
+            logger.warning("Gemini JP classify failed: %s", e)
+            return {"categories": [], "confidence": 0.0, "reason": f"error: {e}"}
+
+    def cost_estimate(self) -> dict:
+        cost = (self.input_tokens * 0.10 + self.output_tokens * 0.40) / 1_000_000
+        return {
+            "requests": self.requests,
+            "errors": self.errors,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cost_usd": round(cost, 6),
+        }

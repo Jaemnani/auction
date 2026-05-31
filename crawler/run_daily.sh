@@ -155,6 +155,14 @@ SALES_TO="$(/bin/date +%Y%m%d)"
 step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
   --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
+# 8) 파생 카테고리 (전원주택/도심단독/농가/별장) — 신규 단독·다가구 매물 자동 분류.
+#    GEMINI_API_KEY 있으면 룰 미분류 매물에 Gemini Flash Lite 보강 (매물당 ~$0.00004).
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  step "backfill-categories (rule+LLM)" crawler/scripts/ingest.py backfill-categories --llm
+else
+  step "backfill-categories (rule only)" crawler/scripts/ingest.py backfill-categories
+fi
+
 # --- 30일 이상 로그 정리 ---
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true
 

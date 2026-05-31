@@ -393,14 +393,31 @@ async def cmd_backfill_details_all(args: argparse.Namespace) -> None:
 async def cmd_backfill_categories(args: argparse.Namespace) -> None:
     """일본 매물 derived_category 일괄 계산 (別荘/空き家/리조트/離島).
 
-    LLM 보강은 추후 — 1차는 룰만 (한국 패턴과 다르게 일본은 sale_cls 표준 분류
-    있어서 derived는 보조 역할).
+    1) 룰 엔진 — bit/derived_category.derive_categories (무료)
+    2) --llm 옵션: 룰 미분류 + sale_cls='2'(戸建て) 매물에 Gemini Flash Lite 보강.
+       매물당 ~$0.00004. 1179건 중 戸建て 일부 → 비용 미미.
     --force: 기존 derived_category 있어도 재계산.
     """
     from bit.derived_category import derive_categories  # noqa: E402
 
+    classifier = None
+    if args.llm:
+        from llm import GeminiJpClassifier  # noqa: E402
+        classifier = GeminiJpClassifier()
+        print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
+              "— 룰 미분류 戸建て만 호출")
+
     store = BitStore()
-    n_updated = 0
+
+    # prefecture name lookup — 47건, 한 번에 dict
+    pref_rows = (
+        store.sb.table("jp_prefectures").select("code,name").execute().data or []
+    )
+    pref_name_by_code: dict[str, str] = {r["code"]: r["name"] for r in pref_rows}
+
+    n_rule_updated = 0
+    n_llm_called = 0
+    n_llm_updated = 0
     n_seen = 0
     page_size = max(50, int(args.batch))
     last_id: str | None = None
@@ -408,8 +425,8 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
     while True:
         q = (
             store.sb.table("jp_properties")
-            .select("sale_unit_id, sale_cls, address_text, "
-                    "prefecture_code, derived_category")
+            .select("sale_unit_id, sale_cls, sale_cls_label, address_text, "
+                    "prefecture_code, sale_standard_price, derived_category")
             .order("sale_unit_id")
             .limit(page_size)
         )
@@ -428,20 +445,45 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
             n_seen += 1
             last_id = r["sale_unit_id"]
             cats = derive_categories(r)
+            via_llm = False
+
+            # 룰 미분류 + 戸建て + LLM 활성 → Gemini 호출
+            if (not cats and classifier is not None
+                    and str(r.get("sale_cls") or "") == "2"):
+                pref_name = pref_name_by_code.get(
+                    r.get("prefecture_code") or "", ""
+                )
+                llm_out = await asyncio.to_thread(
+                    classifier.classify, r, pref_name=pref_name,
+                )
+                n_llm_called += 1
+                cats = llm_out.get("categories") or []
+                if cats:
+                    via_llm = True
+                    n_llm_updated += 1
+
             prev = r.get("derived_category") or []
             if sorted(prev) == sorted(cats):
                 continue
+
             store.sb.table("jp_properties").update(
                 {"derived_category": cats}
             ).eq("sale_unit_id", r["sale_unit_id"]).execute()
-            n_updated += 1
-            if n_updated % 100 == 0:
-                print(f"  ... {n_updated} updated (seen {n_seen})")
+
+            if not via_llm and cats:
+                n_rule_updated += 1
+            done = n_rule_updated + n_llm_updated
+            if done > 0 and done % 50 == 0:
+                print(f"  ... rule={n_rule_updated} llm={n_llm_updated} "
+                      f"(seen {n_seen}, llm_called {n_llm_called})")
 
         if args.limit and n_seen >= args.limit:
             break
 
-    print(f"\n[done] jp backfill-categories → updated={n_updated}, seen={n_seen}")
+    print(f"\n[done] jp backfill-categories → rule={n_rule_updated}, "
+          f"llm={n_llm_updated}/{n_llm_called} called, seen={n_seen}")
+    if classifier:
+        print(f"  LLM cost: {classifier.cost_estimate()}")
 
 
 # ---------- detail ----------
@@ -544,6 +586,9 @@ def main() -> None:
     s.add_argument("--batch", type=int, default=500)
     s.add_argument("--limit", type=int, default=None)
     s.add_argument("--force", action="store_true")
+    s.add_argument("--llm", action="store_true",
+                   help="룰 미분류 戸建て(sale_cls=2)에 Gemini Flash Lite 보강 "
+                        "(GEMINI_API_KEY 필요)")
     s.set_defaults(fn=cmd_backfill_categories)
 
     args = p.parse_args()

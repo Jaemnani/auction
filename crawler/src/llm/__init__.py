@@ -1,3 +1,3 @@
-from .gemini import GeminiClassifier, GeminiConfig
+from .gemini import GeminiClassifier, GeminiConfig, GeminiJpClassifier
 
-__all__ = ["GeminiClassifier", "GeminiConfig"]
+__all__ = ["GeminiClassifier", "GeminiConfig", "GeminiJpClassifier"]
