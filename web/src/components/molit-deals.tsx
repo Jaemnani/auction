@@ -55,21 +55,23 @@ export function MolitDeals({ lawdCd, type = "apt" }: Props) {
 
     let cancel = false;
     (async () => {
+      // 6개월 병렬 요청 — 이전 직렬 (for-await) 패턴은 6× latency 누적.
+      // allSettled로 부분 실패 허용 (한 월 API 장애도 다른 월 결과는 표시).
+      const results = await Promise.allSettled(
+        months.map((ym) =>
+          fetch(`/api/molit-deals?type=${active}&lawd_cd=${lawdCd}&deal_ymd=${ym}&num_of_rows=30`)
+            .then((r) => (r.ok ? r.json() : null))
+        ),
+      );
+      if (cancel) return;
       const collected: Deal[] = [];
-      for (const ym of months) {
-        if (cancel) return;
-        try {
-          const r = await fetch(`/api/molit-deals?type=${active}&lawd_cd=${lawdCd}&deal_ymd=${ym}&num_of_rows=30`);
-          if (!r.ok) continue;
-          const j = await r.json();
-          if (Array.isArray(j.items)) collected.push(...j.items);
-          if (collected.length >= 20) break;
-        } catch { /* skip */ }
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value && Array.isArray(r.value.items)) {
+          collected.push(...r.value.items);
+        }
       }
-      if (!cancel) {
-        setDeals(collected.slice(0, 20));
-        setLoading(false);
-      }
+      setDeals(collected.slice(0, 20));
+      setLoading(false);
     })();
     return () => { cancel = true; };
   }, [lawdCd, active]);

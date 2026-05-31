@@ -20,7 +20,9 @@ import { AreaText } from "@/components/area-text";
 import { ExportButtons } from "@/components/export-buttons";
 import { buildKrMarkdown } from "@/lib/kr-markdown";
 
-export const dynamic = "force-dynamic";
+// detail 페이지는 params(docid) 기반 단건 — ISR로 동시 방문 시 캐시 hit.
+// cron이 매일 04:00 갱신하므로 1시간 revalidate가 적절 (지난 캐시 최대 60분).
+export const revalidate = 3600;
 
 export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
   const { docid: rawDocid } = await props.params;
