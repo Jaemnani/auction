@@ -16,6 +16,7 @@ export type JpFilters = {
   with_geo: "1" | null;          // 좌표 있는 매물만 (지도용)
   sort: string | null;
   dir: "asc" | "desc" | null;
+  derived: string[] | null;      // 派生 카테고리: bessou/akiya/rizoto/tousho
 };
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -61,6 +62,17 @@ export function parseJpFilters(
   const pageRaw = num("page");
   const dir = get("dir");
   const flag = (k: string): "1" | null => (get(k) === "1" ? "1" : null);
+  // derived: form 의 checkbox 다중 = sp.derived 가 string[]. buildJpHref 가
+  // CSV 또는 다중키로 만들 수도 있어서 양쪽 모두 지원.
+  const dvRaw = sp["derived"];
+  const dvList = !dvRaw
+    ? []
+    : Array.isArray(dvRaw)
+      ? dvRaw
+      : dvRaw.split(",");
+  const derived = dvList
+    .map((s) => s.trim())
+    .filter((s) => /^[a-z_]+$/.test(s));
   return {
     page: Math.max(1, pageRaw ?? 1),
     page_size: DEFAULT_PAGE_SIZE,
@@ -77,6 +89,7 @@ export function parseJpFilters(
     with_geo: flag("with_geo"),
     sort: get("sort"),
     dir: dir === "asc" || dir === "desc" ? dir : null,
+    derived: derived && derived.length > 0 ? derived : null,
   };
 }
 
@@ -101,6 +114,18 @@ export function buildJpHref(
   if (merged.with_geo) sp.set("with_geo", "1");
   if (merged.sort) sp.set("sort", merged.sort);
   if (merged.dir) sp.set("dir", merged.dir);
+  // derived: form checkbox 와 일관성 위해 다중 키 (?derived=bessou&derived=akiya)
+  if (merged.derived && merged.derived.length > 0) {
+    for (const d of merged.derived) sp.append("derived", d);
+  }
   const qs = sp.toString();
   return qs ? `${base}?${qs}` : base;
 }
+
+/** 일본 derived 카테고리 옵션 — bit/derived_category.py ALL_CATEGORIES 와 동기화. */
+export const JP_DERIVED_OPTIONS: Array<{ code: string; label: string; desc: string }> = [
+  { code: "bessou",  label: "別荘・山荘",     desc: "戸建て + 別荘·山荘·リゾート·別邸 키워드" },
+  { code: "akiya",   label: "空き家・古民家", desc: "戸建て + 空き家·古民家 키워드" },
+  { code: "rizoto",  label: "リゾート地",     desc: "戸建て + 北海道(01)·沖縄(47)" },
+  { code: "tousho",  label: "離島",           desc: "沖縄(47) prefecture" },
+];

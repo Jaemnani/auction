@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import {
   type JpFilters,
-  SALE_CLS_OPTIONS, STATUS_OPTIONS, CASE_KIND_OPTIONS,
+  SALE_CLS_OPTIONS, STATUS_OPTIONS, CASE_KIND_OPTIONS, JP_DERIVED_OPTIONS,
 } from "@/lib/jp-filters";
 import { getT } from "@/lib/i18n-server";
 
@@ -111,6 +111,29 @@ export async function JpFilterBar({ action, filters, prefs, courts, pdfStats }: 
                      defaultChecked={filters.with_geo === "1"} />
               <span>{t("filter.with_geo")}</span>
             </label>
+          </div>
+
+          {/* 派生 카테고리 (別荘/空き家/리조트/離島) */}
+          <div className="sm:col-span-12 flex flex-wrap items-center gap-2 text-xs border-t pt-2">
+            <span className="text-muted-foreground">✨ 派生:</span>
+            {JP_DERIVED_OPTIONS.map((o) => {
+              const active = filters.derived?.includes(o.code) ?? false;
+              return (
+                <label key={o.code} title={o.desc}
+                       className={
+                         "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 transition " +
+                         (active
+                           ? "bg-emerald-100 border-emerald-300 text-emerald-800"
+                           : "bg-card border-border hover:bg-muted")
+                       }>
+                  <input type="checkbox" name="derived" value={o.code}
+                         defaultChecked={active}
+                         className="hidden" />
+                  <span>{active ? "✓" : "○"}</span>
+                  <span>{o.label}</span>
+                </label>
+              );
+            })}
           </div>
 
           {/* sort/dir 보존 — hidden */}

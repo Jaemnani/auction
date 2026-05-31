@@ -48,6 +48,9 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
   }
   if (filters.yen_10k === "1") q = q.eq("yen_10k_trap", true);
   if (filters.has_pdf === "1") q = q.eq("detail_result->>has_three_set_pdf", "true");
+  if (filters.derived && filters.derived.length > 0) {
+    q = q.overlaps("derived_category", filters.derived);
+  }
 
   const { data, error } = await q;
   if (error) {

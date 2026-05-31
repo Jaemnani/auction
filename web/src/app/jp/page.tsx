@@ -104,6 +104,9 @@ async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: numb
   if (filters.has_pdf === "1") {
     q = q.eq("detail_result->>has_three_set_pdf", "true");
   }
+  if (filters.derived && filters.derived.length > 0) {
+    q = q.overlaps("derived_category", filters.derived);
+  }
 
   // 정렬 — sort/dir이 있으면 그것 사용. 없으면 입찰기간 빠른 순.
   const sortCol = filters.sort ? SORT_COLUMNS[filters.sort] : null;
