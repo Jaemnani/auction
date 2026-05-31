@@ -818,6 +818,41 @@ class Store:
         return self.sb.storage.from_(PHOTO_BUCKET).get_public_url(
             THUMB_PREFIX + storage_path)
 
+    # ---------- close-aged (종결 매물 soft delete) ----------
+
+    def close_aged(self, since_iso: str) -> int:
+        """last_synced_at < since_iso 이고 deleted_at NULL 인 매물을 soft delete.
+
+        매일 search 시작 시점을 since_iso로 받아 — 이번 갱신에서 등장 안 한 매물은
+        courtauction 검색에서 사라진 것(낙찰 완료·취하·매각결정 후 종결).
+        deleted_at 채움 — 모든 list/map query 가 `.is_("deleted_at", "null")`
+        필터를 쓰므로 UI에서 자동 제외 (soft delete, 추후 복구·통계 가능).
+        """
+        from datetime import datetime, timezone
+        sel = (
+            self.sb.table("properties")
+            .select("id, last_synced_at")
+            .lt("last_synced_at", since_iso)
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        rows = sel.data or []
+        if not rows:
+            return 0
+        ids = [r["id"] for r in rows]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # 1000건씩 chunk update (PostgREST in_ 길이 제한 회피)
+        n = 0
+        for i in range(0, len(ids), 1000):
+            chunk = ids[i:i + 1000]
+            self.sb.table("properties").update(
+                {"deleted_at": now_iso}
+            ).in_("id", chunk).execute()
+            n += len(chunk)
+        logger.info("soft-deleted %d aged properties (last_synced_at < %s)",
+                    n, since_iso)
+        return n
+
     # ---------- crawl runs / dead letters ----------
 
     def start_run(self, job_type: str, params: dict | None = None) -> str:

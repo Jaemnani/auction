@@ -110,6 +110,11 @@ echo "python: $PYTHON"
 echo "court:  ${COURT:-<all>}  PHOTOS_PER_PROPERTY=$PHOTOS_PER_PROPERTY"
 echo "budget: ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분)"
 
+# search 시작 직전 capture — 이 시각 이전 last_synced_at 매물은 close-aged 대상
+# (search 한 바퀴 돌면 살아있는 매물은 모두 last_synced_at 갱신됨)
+RUN_SINCE_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+echo "since:  $RUN_SINCE_ISO (search 후 이 시각 이전 last_synced_at 매물 → soft delete)"
+
 # 1) 마스터 코드 (5초)
 step "masters" crawler/scripts/ingest.py masters
 
@@ -162,6 +167,11 @@ if [ -n "${GEMINI_API_KEY:-}" ]; then
 else
   step "backfill-categories (rule only)" crawler/scripts/ingest.py backfill-categories
 fi
+
+# 9) 종결 매물 soft delete — search에서 사라진 매물(낙찰/취하)을 UI에서 자동 제외.
+#    deleted_at 채움. list/map query 가 `.is_("deleted_at", "null")` 필터라 자동 적용.
+#    raw_responses/사진/detail_result 는 보존 (통계·복구 가능).
+step "close-aged" crawler/scripts/ingest.py close-aged --since "$RUN_SINCE_ISO"
 
 # --- 30일 이상 로그 정리 ---
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true

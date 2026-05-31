@@ -610,6 +610,42 @@ async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
     print(f"\n[done] backfill-risk-flags → updated={n_updated}, seen={n_seen} ({elapsed:.1f}s)")
 
 
+# ---------- close-aged (종결 매물 soft delete) ----------
+
+async def cmd_close_aged(args: argparse.Namespace) -> None:
+    """search 시작 시점(--since) 이전에 갱신된 매물을 soft delete (deleted_at).
+
+    매일 run_daily.sh 가 search 시작 직전에 timestamp 캡처 → search 한 바퀴 돈 뒤
+    이 명령 호출. courtauction 검색에서 사라진 매물(낙찰/취하)을 UI에서 자동 제외.
+    --dry-run: 실제 update 없이 카운트만.
+    """
+    store = Store()
+    run_id = store.start_run("close_aged",
+                             {"since": args.since, "dry_run": bool(args.dry_run)})
+    started = time.monotonic()
+
+    try:
+        if args.dry_run:
+            sel = (store.sb.table("properties")
+                   .select("id", count="exact", head=True)
+                   .lt("last_synced_at", args.since)
+                   .is_("deleted_at", "null")
+                   .execute())
+            n = sel.count or 0
+            print(f"[dry-run] {n} properties would be soft-deleted "
+                  f"(last_synced_at < {args.since})")
+        else:
+            n = store.close_aged(args.since)
+            print(f"[done] soft-deleted {n} properties (last_synced_at < {args.since})")
+
+        store.finish_run(run_id, totals={"closed": n})
+        elapsed = time.monotonic() - started
+        print(f"  elapsed {elapsed:.1f}s")
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        raise
+
+
 # ---------- backfill derived_category ----------
 
 async def cmd_backfill_categories(args: argparse.Namespace) -> None:
@@ -1028,6 +1064,13 @@ def main() -> None:
                          help="search_row의 도로명/지번 주소를 properties.road_addr/lot_addr로 채움")
     p_a.add_argument("--limit", type=int, default=10000)
     p_a.set_defaults(func=cmd_backfill_addrs)
+
+    p_ca = sub.add_parser("close-aged",
+                          help="--since 이전에 마지막 갱신된 매물을 deleted_at 채워 soft delete")
+    p_ca.add_argument("--since", required=True,
+                      help="ISO datetime (예: 2026-06-01T04:00:00Z) — 보통 search 시작 시각")
+    p_ca.add_argument("--dry-run", action="store_true", help="카운트만 표시")
+    p_ca.set_defaults(func=cmd_close_aged)
 
     p_un = sub.add_parser("backfill-usage-nm",
                           help="기존 매물의 search_row.dspslUsgNm → properties.usage_nm 복사 (0013 직후 1회)")
