@@ -85,7 +85,10 @@ async function fetchJp(filters: JpFilters): Promise<{ rows: JpRow[]; count: numb
   if (filters.court) q = q.eq("jp_cases.jp_courts.code", filters.court);
   if (filters.case_kind) q = q.eq("jp_cases.case_kind", filters.case_kind);
   if (filters.q) {
-    if (/[(令和|平成|\(ケ\)|\(ヌ\))]/.test(filters.q)) {
+    // 注意: 元は [(令和|平成|...)] と character-class で書かれていたが
+    // [] 内 alternation は単一文字マッチ → "(" だけでも一致する偽陽性。
+    // 正しいのは alternation group。
+    if (/(令和|平成|\(ケ\)|\(ヌ\))/.test(filters.q)) {
       q = q.ilike("jp_cases.case_no", `%${filters.q}%`);
     } else {
       q = q.ilike("address_text", `%${filters.q}%`);

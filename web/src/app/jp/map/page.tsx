@@ -37,7 +37,10 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
   if (filters.price_min != null) q = q.gte("sale_standard_price", filters.price_min);
   if (filters.price_max != null) q = q.lte("sale_standard_price", filters.price_max);
   if (filters.q) {
-    if (/[(令和|平成|\(ケ\)|\(ヌ\))]/.test(filters.q)) {
+    // 注意: 元は [(令和|平成|...)] と character-class で書かれていたが
+    // [] 内 alternation は単一文字マッチ → "(" だけでも一致する偽陽性。
+    // 正しいのは alternation group。
+    if (/(令和|平成|\(ケ\)|\(ヌ\))/.test(filters.q)) {
       q = q.ilike("jp_cases.case_no", `%${filters.q}%`);
     } else {
       q = q.ilike("address_text", `%${filters.q}%`);
