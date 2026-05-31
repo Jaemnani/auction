@@ -151,10 +151,8 @@ export async function fetchProperties(
 }
 
 export async function fetchProperty(docid: string): Promise<PropertyDetail | null> {
-  // 1) 가벼운 컬럼 + 관계 (큰 jsonb는 제외).
-  //    PROPERTY_SELECT에 이미 property_photos(seq, storage_path)가 들어 있으니
-  //    상세에 필요한 추가 필드만 따로 명시.
-  // 단건 fetch라 JSON path 비용 무시 가능 — 권리분석 카드용 키 모두 발췌
+  // 단건 fetch라 JSON path 비용 무시 가능 — 한 select로 베이스 + jsonb path 모두 발췌.
+  // (이전엔 두 번 호출했음. 단건 단순화로 latency 절반 + 동시성 단순화.)
   const DETAIL_SELECT = `
     id, case_id, docid, maemul_ser, mokmul_ser,
     appraisal_amount, min_sale_price, current_sale_price, fail_count,
@@ -171,37 +169,32 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
     susp_rsn:detail_result->csBaseInfo->>csProgSuspRsn,
     claim_amt:detail_result->csBaseInfo->>clmAmt,
     spcfc_ecdoc_id:detail_result->dspslGdsDxdyInfo->>dspslGdsSpcfcEcdocId,
+    csBaseInfo:detail_result->csBaseInfo,
+    dspslGdsDxdyInfo:detail_result->dspslGdsDxdyInfo,
+    aeeWevlMnpntLst:detail_result->aeeWevlMnpntLst,
     cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                     courts:court_code ( code, name ) ),
     property_sale_dates ( seq, sale_date, hour, place, min_price, result_cd, raw ),
     property_photos ( seq, photo_kind_cd, photo_kind_name, description, storage_path )
   `;
-  const { data: base, error } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .select(DETAIL_SELECT)
     .eq("docid", docid)
     .maybeSingle();
 
   if (error) throw error;
-  if (!base) return null;
+  if (!data) return null;
 
-  // 2) detail_result는 jsonb 경로로 필요한 키만 발췌
-  const { data: detail } = await supabase
-    .from("properties")
-    .select("detail_result->csBaseInfo, detail_result->dspslGdsDxdyInfo, detail_result->aeeWevlMnpntLst")
-    .eq("docid", docid)
-    .maybeSingle();
-
+  const row = data as unknown as Record<string, unknown>;
   return {
-    ...(base as unknown as PropertyDetail),
+    ...(row as unknown as PropertyDetail),
     search_row: null,
-    detail_result: detail
-      ? {
-          csBaseInfo: (detail as Record<string, unknown>).csBaseInfo,
-          dspslGdsDxdyInfo: (detail as Record<string, unknown>).dspslGdsDxdyInfo,
-          aeeWevlMnpntLst: (detail as Record<string, unknown>).aeeWevlMnpntLst,
-        }
-      : null,
+    detail_result: {
+      csBaseInfo: row.csBaseInfo,
+      dspslGdsDxdyInfo: row.dspslGdsDxdyInfo,
+      aeeWevlMnpntLst: row.aeeWevlMnpntLst,
+    },
   };
 }
 
@@ -408,12 +401,15 @@ export async function fetchPropertiesForMap(
     if (rows.length < lim) break;
     offset += lim;
   }
-  // 한국 영토 박스 필터 + 매각가율 필터 (클라이언트)
-  let out = collected.filter((r) =>
-    r.longitude !== null && r.latitude !== null
-    && r.longitude >= 124 && r.longitude <= 132.5
-    && r.latitude  >= 33  && r.latitude  <= 39,
-  );
+  // 한국 영토 박스 필터 + 매각가율 필터 (클라이언트).
+  // bbox가 명시되면 사용자 viewport이므로 한국 박스 재검사 불필요 (중복 비용).
+  let out = bbox
+    ? collected
+    : collected.filter((r) =>
+        r.longitude !== null && r.latitude !== null
+        && r.longitude >= 124 && r.longitude <= 132.5
+        && r.latitude  >= 33  && r.latitude  <= 39,
+      );
   if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
     const lo = filters.min_rate ?? 0;
     const hi = filters.max_rate ?? 1000;
