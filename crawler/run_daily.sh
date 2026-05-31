@@ -79,7 +79,12 @@ step() {
   echo ""
   echo "==== $(date -Iseconds) [$label] (budget ${TIME_BUDGET_LEFT:-$(budget_left)}s left) ===="
   "$PYTHON" "$@" || rc=$?
-  [ $rc -ne 0 ] && echo "[warn] step '$label' exited $rc — 다음 step 계속"
+  # 주의: '[ ... ] && echo ...' 단순 패턴은 rc=0 일 때 마지막 expr 이 false 가 되어
+  # 함수가 exit 1 로 끝나고 set -e 트리거 → 스크립트 silent kill.
+  # if/then/fi 또는 끝에 || true 로 명시.
+  if [ "$rc" -ne 0 ]; then
+    echo "[warn] step '$label' exited $rc — 다음 step 계속"
+  fi
 }
 
 # drain 루프 — 출력에서 'ok N' 또는 'updated N' 가 0이거나 'requested 0'이면 종료

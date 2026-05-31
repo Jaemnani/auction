@@ -71,7 +71,11 @@ step() {
   echo ""
   echo "==== $(date -Iseconds) [$label] (budget $(budget_left)s left) ===="
   "$PYTHON" "$@" || rc=$?
-  [ $rc -ne 0 ] && echo "[warn] step '$label' exited $rc — 다음 step 계속"
+  # set -e 함정 회피 — '[ ... ] && echo ...' 단순 패턴은 rc=0 케이스에서
+  # 함수가 exit 1 로 끝나 silent kill.
+  if [ "$rc" -ne 0 ]; then
+    echo "[warn] step '$label' exited $rc — 다음 step 계속"
+  fi
 }
 
 drain() {
