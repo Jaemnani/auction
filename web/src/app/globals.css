@@ -49,6 +49,54 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* ====================================================================
+     DESIGN.md 토큰 (KnowAI/aib.vote 디자인 시스템 — 단일 SOT)
+     기존 shadcn 토큰(primary/secondary/...)은 그대로 유지.
+     아래는 DESIGN.md 의 색·polish·motion 토큰을 별도 namespace 로 추가.
+     ==================================================================== */
+
+  /* 컬러 — DESIGN.md colors 섹션 */
+  --color-primary-dark: #005595;            /* hover 상태 */
+  --color-empathy: #007bff;                  /* 보조 강조 (가장 많이 사용된 hex 통합) */
+  --color-eli5: #16a34a;                     /* ELI5 학습 모드 인디케이터 */
+  --color-eli5-light: #f0fdf4;
+  --color-eli5-dark: #15803d;
+  --color-accent-yellow: #ffe066;            /* 액션 강조 */
+  --color-royal-purple: #ff007b;
+  --color-grey: #bccccc;
+  --color-success: #0070f3;
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-text-base: #0b1215;
+  --color-text-muted: #6b7280;
+  --color-background-light: #fafaf6;         /* 메인 캔버스 */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f5f5;
+  --color-link: #0067b7;
+  --color-link-hover: #005595;
+
+  /* DESIGN.md 의미 spacing — Tailwind 기본 1=4px 위에 의미 이름 추가
+     사용: p-md, gap-lg 등. ad-hoc 숫자(gap-7)는 허용하되 의미 토큰 권장. */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+  --spacing-3xl: 64px;
+
+  /* DESIGN.md shadow — 차분한 elevation */
+  --shadow-sm: 0 5px 10px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 8px 30px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 20px -5px rgba(246, 209, 104, 0.5);
+
+  /* DESIGN.md motion — ease-out-quint, 200ms */
+  --ease-out-quint: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* DESIGN.md 폰트 — Barlow(display) + Pretendard(body) + Noto JP fallback */
+  --font-body: "Pretendard Variable", Pretendard, var(--font-noto-sans-jp),
+               "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
 }
 
 :root {
@@ -127,19 +175,74 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* aib.vote와 동일한 폰트 스택: Barlow(라틴/숫자) + Pretendard(한글) */
-    font-family: var(--font-barlow), "Pretendard Variable", Pretendard,
-      ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo",
-      "Noto Sans KR", "Malgun Gothic", sans-serif;
+    /* DESIGN.md body family: Pretendard + Noto JP + Noto Sans fallback.
+       Barlow 는 display/heading 만 (h1/h2/h3 + .text-display/heading-* 유틸). */
+    font-family: var(--font-body);
     font-feature-settings: "tnum", "ss03";
   }
   html {
-    font-family: var(--font-barlow), "Pretendard Variable", Pretendard,
-      ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-body);
   }
-  /* heading은 약간 더 묵직하게 */
+  /* DESIGN.md: heading 은 Barlow display family. CJK 는 자동으로 Pretendard fallback. */
   h1, h2, h3, .heading {
-    letter-spacing: -0.01em;
+    font-family: var(--font-barlow), var(--font-body);
+    letter-spacing: -0.02em;
     font-weight: 600;
+  }
+}
+
+/* ====================================================================
+   DESIGN.md typography utility classes
+   desktop ceiling 은 clamp() 로 mobile 까지 자연스럽게 축소.
+   사용: <h1 className="text-heading-1">, <p className="text-body-lg">
+   ==================================================================== */
+@layer utilities {
+  .text-display {
+    font-family: var(--font-barlow), var(--font-body);
+    font-size: clamp(48px, 8vw, 80px);
+    line-height: 1.1;
+    letter-spacing: -0.04em;
+  }
+  .text-heading-1 {
+    font-family: var(--font-barlow), var(--font-body);
+    font-size: clamp(32px, 5vw, 56px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+  .text-heading-2 {
+    font-family: var(--font-barlow), var(--font-body);
+    font-size: clamp(24px, 4vw, 40px);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  .text-heading-3 {
+    font-family: var(--font-barlow), var(--font-body);
+    font-size: clamp(20px, 2.5vw, 28px);
+    line-height: 1.3;
+  }
+  .text-body-lg {
+    font-family: var(--font-body);
+    font-size: clamp(17px, 1.5vw, 20px);
+    line-height: 1.7;
+  }
+  .text-body-design {
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.7;
+  }
+  .text-caption {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .text-caption-sm {
+    font-family: var(--font-body);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .text-caption-xs {
+    font-family: var(--font-body);
+    font-size: 10px;
+    line-height: 1.4;
   }
 }
