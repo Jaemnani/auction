@@ -31,12 +31,12 @@ export function PropertyPhotos({ photos }: { photos: Photo[] }) {
             {ph.kind && (
               <Badge
                 variant="secondary"
-                className="absolute top-1 left-1 text-[10px]"
+                className="absolute top-1 left-1 text-caption-xs"
               >
                 {ph.kind}
               </Badge>
             )}
-            <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+            <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-caption-xs text-white">
               #{ph.seq}
             </span>
           </button>

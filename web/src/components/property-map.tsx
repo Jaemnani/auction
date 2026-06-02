@@ -331,8 +331,8 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
       />
 
       {/* 마커 색 legend — 좌하단 (lcl 필터 적용 안 한 상태에서도 한눈에 구분) */}
-      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-[11px] shadow-sm space-y-0.5">
-        <div className="text-muted-foreground font-medium text-[10px] uppercase tracking-wide mb-0.5">
+      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-caption-sm shadow-sm space-y-0.5">
+        <div className="text-muted-foreground font-medium text-caption-xs uppercase tracking-wide mb-0.5">
           마커 색
         </div>
         {Object.entries(LCL_COLORS).map(([code, { color, label }]) => (

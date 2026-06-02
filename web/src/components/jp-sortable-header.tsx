@@ -41,7 +41,7 @@ export function JpSortableHeader({ field, label, className = "", align = "left" 
       }
     >
       <span>{label}</span>
-      <span className={isActive ? "text-primary text-xs" : "text-muted-foreground text-[10px]"}>
+      <span className={isActive ? "text-primary text-xs" : "text-muted-foreground text-caption-xs"}>
         {arrow}
       </span>
     </Link>

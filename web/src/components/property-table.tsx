@@ -64,7 +64,7 @@ function PropertyRow({ r, usageNames, eager = false }: {
                 className="h-full w-full object-cover"
               />
             ) : (
-              <span className="text-[10px] text-muted-foreground">사진 없음</span>
+              <span className="text-caption-xs text-muted-foreground">사진 없음</span>
             )}
           </div>
 
@@ -77,7 +77,7 @@ function PropertyRow({ r, usageNames, eager = false }: {
               </span>
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground truncate">{r.cases?.courts?.name ?? "-"}</span>
-              {usage && <Badge variant="outline" className="text-[10px]">{usage}</Badge>}
+              {usage && <Badge variant="outline" className="text-caption-xs">{usage}</Badge>}
             </div>
 
             <div className="text-sm font-medium truncate">
@@ -101,7 +101,7 @@ function PropertyRow({ r, usageNames, eager = false }: {
               </div>
             )}
             {!r.road_addr && r.conv_addr && (
-              <div className="text-[10px] text-amber-600">(도로명 미수집)</div>
+              <div className="text-caption-xs text-amber-600">(도로명 미수집)</div>
             )}
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -113,13 +113,13 @@ function PropertyRow({ r, usageNames, eager = false }: {
                   : d <= 7 ? "text-red-600 font-semibold"
                   : d <= 30 ? "text-amber-600 font-semibold"
                   : "text-foreground";
-                return <span className={`text-[10px] font-mono ${cls}`}>{fmtDDay(d)}</span>;
+                return <span className={`text-caption-xs font-mono ${cls}`}>{fmtDDay(d)}</span>;
               })()}
               {r.fail_count != null && r.fail_count > 0 && (
-                <Badge variant="secondary" className="text-[10px] font-mono">유찰 {r.fail_count}</Badge>
+                <Badge variant="secondary" className="text-caption-xs font-mono">유찰 {r.fail_count}</Badge>
               )}
               {discount !== "-" && (
-                <Badge variant="destructive" className="text-[10px]">{discount}</Badge>
+                <Badge variant="destructive" className="text-caption-xs">{discount}</Badge>
               )}
               {/* 위험·보증금·진행상태 배지는 detail 페이지에 노출
                   (목록 query에서 detail_result JSON path 추출은 17k row × jsonb로 타임아웃) */}
@@ -128,12 +128,12 @@ function PropertyRow({ r, usageNames, eager = false }: {
 
           {/* 가격 — 우측 정렬 */}
           <div className="shrink-0 text-right space-y-0.5 min-w-[88px]">
-            <div className="text-[10px] text-muted-foreground">감정가</div>
+            <div className="text-caption-xs text-muted-foreground">감정가</div>
             <div className="text-sm">{fmtMoneyShort(r.appraisal_amount)}</div>
-            <div className="text-[10px] text-muted-foreground mt-1">최저가</div>
+            <div className="text-caption-xs text-muted-foreground mt-1">최저가</div>
             <div className="text-sm font-bold text-primary">{fmtMoneyShort(r.min_sale_price)}</div>
             {ratio != null && (
-              <div className="text-[10px] text-muted-foreground">감정가의 {ratio}%</div>
+              <div className="text-caption-xs text-muted-foreground">감정가의 {ratio}%</div>
             )}
           </div>
         </div>

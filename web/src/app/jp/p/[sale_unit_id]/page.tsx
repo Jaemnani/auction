@@ -227,7 +227,7 @@ export default async function JpDetailPage({
                 ))}
               </div>
             )}
-            <p className="text-[10px] text-muted-foreground mt-2">
+            <p className="text-caption-xs text-muted-foreground mt-2">
               {ownPhotos.length > 0
                 ? "Supabase Storage セルフホスト"
                 : "BIT 元データ直接リンク (取込未完)"}
@@ -247,28 +247,28 @@ export default async function JpDetailPage({
                 <div className="text-2xl font-bold text-amber-600 font-mono">
                   {fmtJpy(prices.sale_standard_price ?? row.sale_standard_price)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">裁判所が定めた基準価額</div>
+                <div className="text-caption-xs text-muted-foreground">裁判所が定めた基準価額</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">買受可能価額</div>
                 <div className="text-xl font-semibold font-mono">
                   {fmtJpy(prices.purchase_possible_price ?? row.purchase_possible_price)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">買受可能の最低額 (= 基準 × 80%)</div>
+                <div className="text-caption-xs text-muted-foreground">買受可能の最低額 (= 基準 × 80%)</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">買受申出保証金</div>
                 <div className="text-base font-semibold font-mono">
                   {fmtJpy(prices.bid_deposit ?? row.bid_deposit)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">入札保証金 (= 基準 × 20%)</div>
+                <div className="text-caption-xs text-muted-foreground">入札保証金 (= 基準 × 20%)</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground mb-1">鑑定評価額</div>
                 <div className="text-base text-muted-foreground font-mono">
                   未取得
                 </div>
-                <div className="text-[10px] text-muted-foreground">詳細ページからの追加偵察が必要</div>
+                <div className="text-caption-xs text-muted-foreground">詳細ページからの追加偵察が必要</div>
               </div>
             </div>
           </CardContent>

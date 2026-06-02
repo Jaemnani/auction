@@ -86,7 +86,7 @@ export function MolitDeals({ lawdCd, type = "apt" }: Props) {
             type="button"
             onClick={() => setActive(t)}
             className={
-              "rounded px-2 py-0.5 text-[11px] border " +
+              "rounded px-2 py-0.5 text-caption-sm border " +
               (t === active
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-background hover:bg-muted text-muted-foreground")

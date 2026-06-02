@@ -291,7 +291,7 @@ export default async function JpListingPage(props: {
                         </Link>
                         <span className="text-muted-foreground">{courtName}</span>
                         {r.yen_10k_trap && (
-                          <Badge variant="destructive" className="ml-1 text-[10px] px-1 py-0">⚠1万</Badge>
+                          <Badge variant="destructive" className="ml-1 text-caption-xs px-1 py-0">⚠1万</Badge>
                         )}
                       </TableCell>
                       <TableCell>
@@ -309,7 +309,7 @@ export default async function JpListingPage(props: {
                       </TableCell>
                       <TableCell>
                         {status ? (
-                          <span className={`inline-block rounded border px-2 py-0.5 text-[10px] ${status.tone}`}>
+                          <span className={`inline-block rounded border px-2 py-0.5 text-caption-xs ${status.tone}`}>
                             {status.label}
                           </span>
                         ) : "—"}

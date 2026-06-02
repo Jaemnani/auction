@@ -486,7 +486,7 @@ function PropertyRiskCard({ p }: { p: Awaited<ReturnType<typeof fetchProperty>> 
                 </ul>
               </div>
             )}
-            <div className="text-[10px] text-muted-foreground mt-1.5">
+            <div className="text-caption-xs text-muted-foreground mt-1.5">
               ※ 자동 추출 — 정확한 권리분석은 매각물건명세서·등기부등본 직접 확인
             </div>
           </div>

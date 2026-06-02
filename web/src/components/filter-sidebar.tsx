@@ -383,7 +383,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
                 <SelectItem value="no_road">도로명 미수집만</SelectItem>
               </SelectContent>
             </Select>
-            <div className="text-[10px] text-muted-foreground mt-1">
+            <div className="text-caption-xs text-muted-foreground mt-1">
               일부 매물은 좌표만 있고 도로명이 없습니다.
             </div>
           </div>
@@ -399,7 +399,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               {f.usage_nm.length}개 선택
             </span>
           )}
-          <span className="ml-auto text-[10px] text-muted-foreground">
+          <span className="ml-auto text-caption-xs text-muted-foreground">
             사이트 분류 (아파트·오피스텔·단독주택 등 20종)
           </span>
         </summary>
@@ -452,7 +452,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               {f.derived.length}개 선택
             </span>
           )}
-          <span className="ml-auto text-[10px] text-muted-foreground">
+          <span className="ml-auto text-caption-xs text-muted-foreground">
             룰 엔진 자동 분류 (단독·다가구 매물 대상)
           </span>
         </summary>
@@ -488,7 +488,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
             );
           })}
         </div>
-        <div className="text-[10px] text-muted-foreground mt-3 border-t pt-2">
+        <div className="text-caption-xs text-muted-foreground mt-3 border-t pt-2">
           분류는 ingest 시 자동. 기존 매물 일괄 분류는
           <code className="bg-muted px-1 mx-1 rounded">crawler/scripts/ingest.py backfill-categories</code>
           1회 실행 (마이그레이션 0013 적용 후).
@@ -504,7 +504,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               {f.exclude_flags.length}개 선택
             </span>
           )}
-          <span className="ml-auto text-[10px] text-muted-foreground">
+          <span className="ml-auto text-caption-xs text-muted-foreground">
             체크한 특징이 있는 매물은 결과에서 제외
           </span>
         </summary>
@@ -545,7 +545,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               </div>
             </div>
           ))}
-          <div className="text-[10px] text-muted-foreground pt-2 border-t">
+          <div className="text-caption-xs text-muted-foreground pt-2 border-t">
             매물의 위험 분석은 detail 적재 시 자동 계산.
             기존 매물은 <code className="bg-muted px-1 rounded">crawler/scripts/ingest.py backfill-risk-flags</code> 1회 실행 필요.
           </div>
