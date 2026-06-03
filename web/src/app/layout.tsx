@@ -58,7 +58,8 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AreaUnitProvider>
         <header className="border-b sticky top-0 z-30 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-          <Container className="h-14 flex items-center gap-6">
+          {/* 헤더는 default(1280) — 콘텐츠 양 적어 좁아도 OK */}
+          <Container maxW="wide" className="h-14 flex items-center gap-6">
             <Link href="/" className="flex items-baseline gap-2">
               <span className="text-lg font-bold tracking-tight">법원경매</span>
               <span className="text-caption-sm text-text-muted hidden sm:inline">무료 검색</span>
@@ -71,12 +72,14 @@ export default function RootLayout({
           </Container>
         </header>
         <main className="flex-1 grow w-full">
-          <Container className="py-6">
+          {/* main 은 wide(1440) — 일본 매물 테이블 9컬럼·한국 다중 필터 폭 수용.
+              헤더/푸터와 폭이 살짝 다르지만 한·일 페이지 폭은 동일. */}
+          <Container maxW="wide" className="py-6">
             {children}
           </Container>
         </main>
         <footer className="border-t py-3">
-          <Container className="text-center text-caption-sm text-text-muted">
+          <Container maxW="wide" className="text-center text-caption-sm text-text-muted">
             데이터: courtauction.go.kr · 본 서비스는 무료 · 공식 사이트 정보를 우선하세요
           </Container>
         </footer>
