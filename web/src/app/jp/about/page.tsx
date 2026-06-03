@@ -34,7 +34,7 @@ const JP_FEATURES = [
 
 export default function JpAboutPage() {
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6">
       <div className="text-xs">
         <Link href="/jp" className="text-muted-foreground hover:text-primary hover:underline">
           ← 일본 매물 목록

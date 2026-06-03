@@ -112,7 +112,7 @@ export default async function JpMapPage(props: {
   ]);
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto">
+    <div className="space-y-4">
       <section className="rounded-lg border bg-card p-5 space-y-2">
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary" className="text-xs">座標あり {rows.length}件</Badge>

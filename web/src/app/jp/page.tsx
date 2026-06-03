@@ -199,7 +199,7 @@ export default async function JpListingPage(props: {
     );
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6">
       <section className="rounded-lg border bg-card p-6 space-y-2">
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary" className="text-xs">全国取込済 · {count}件</Badge>
