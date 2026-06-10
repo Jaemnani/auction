@@ -57,6 +57,11 @@ class StructureChanged(CourtAuctionError):
     """응답 스키마가 기대와 다름 — 사이트 개편 가능성."""
 
 
+class IpBlocked(CourtAuctionError):
+    """courtauction IP 차단 — 지수 backoff 재시도 다 소진. 세션 종료하고
+    다음 실행(cron)에 재개하는 것이 정답 (보통 차단은 수십분~수시간 지속)."""
+
+
 # ---------- Config ----------
 
 @dataclass
@@ -68,7 +73,11 @@ class ClientConfig:
     max_retries: int = 5
     backoff_base_s: float = 0.5
     backoff_max_s: float = 60.0
-    ip_block_pause_s: float = 90.0      # IP 차단 감지 시 추가 대기
+    # IP 차단은 network retry 와 분리된 카운터 + 지수 backoff.
+    # 90 → 180 → 360 → 720 (cap 900) = 약 22분 시도 후 IpBlocked 로 세션 종료.
+    ip_block_pause_s: float = 90.0       # 첫 대기 (지수 base)
+    ip_block_pause_max_s: float = 900.0  # 대기 상한 (15분)
+    ip_block_max_retries: int = 4        # IP block 전용 재시도 횟수
     save_dir: Path | None = None        # raw response 저장
     dead_letter_path: Path | None = None  # 영구 실패 jsonl
     extra_headers: dict[str, str] | None = None
@@ -168,7 +177,9 @@ class CourtAuctionClient:
             raise RuntimeError("CourtAuctionClient must be used as async context manager")
 
         last_err: Exception | None = None
-        for attempt in range(self.cfg.max_retries):
+        attempt = 0              # network/5xx 재시도 카운터
+        ip_block_attempt = 0     # IP 차단 전용 카운터 (위와 분리)
+        while attempt < self.cfg.max_retries:
             async with self._sem:
                 try:
                     await self._throttle()
@@ -181,6 +192,7 @@ class CourtAuctionClient:
                     logger.warning("network error %s on %s (attempt %d), retry in %.1fs",
                                    type(e).__name__, path, attempt + 1, delay)
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
 
             if 500 <= r.status_code < 600:
@@ -190,6 +202,7 @@ class CourtAuctionClient:
                 logger.warning("HTTP %d on %s (attempt %d), retry in %.1fs",
                                r.status_code, path, attempt + 1, delay)
                 await asyncio.sleep(delay)
+                attempt += 1
                 continue
 
             try:
@@ -211,18 +224,34 @@ class CourtAuctionClient:
 
             data = body.get("data")
 
-            # IP 차단 감지: 응답 message에 "보안정책" 포함 또는 data.ipcheck == False
+            # IP 차단 감지: 응답 message에 "보안정책" 포함 또는 data.ipcheck == False.
+            # 일반 retry 와 분리된 카운터 + 지수 backoff. 다 소진하면 IpBlocked 로
+            # 세션 종료 (90초 고정 5회로는 수십분 차단이 안 풀림 — 무의미한 대기 방지).
             msg = body.get("message") or ""
             ipchecked_ok = (
                 not isinstance(data, dict) or data.get("ipcheck") is not False
             )
             if "보안정책" in msg or "차단" in msg or not ipchecked_ok:
-                logger.warning("IP block detected on %s — pausing %.1fs (attempt %d/%d): msg=%s",
-                               path, self.cfg.ip_block_pause_s,
-                               attempt + 1, self.cfg.max_retries, msg[:80])
-                await asyncio.sleep(self.cfg.ip_block_pause_s)
-                last_err = TransientError(f"IP block on {path}")
-                continue
+                ip_block_attempt += 1
+                if ip_block_attempt > self.cfg.ip_block_max_retries:
+                    raise IpBlocked(
+                        f"IP blocked on {path} — {self.cfg.ip_block_max_retries}회 "
+                        f"지수 backoff 후에도 미해소. 차단이 길어 세션 종료 "
+                        f"(다음 실행에서 재개). msg={msg[:80]}"
+                    )
+                delay = min(
+                    self.cfg.ip_block_pause_s * (2 ** (ip_block_attempt - 1)),
+                    self.cfg.ip_block_pause_max_s,
+                )
+                logger.warning(
+                    "IP block detected on %s — pausing %.0fs "
+                    "(ip-block %d/%d): msg=%s",
+                    path, delay, ip_block_attempt,
+                    self.cfg.ip_block_max_retries, msg[:80],
+                )
+                await asyncio.sleep(delay)
+                last_err = IpBlocked(f"IP block on {path}")
+                continue  # attempt(network 카운터) 안 깎음
 
             if expect_keys and isinstance(data, dict):
                 missing = [k for k in expect_keys if k not in data]

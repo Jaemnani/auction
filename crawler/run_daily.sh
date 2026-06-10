@@ -80,6 +80,11 @@ step() {
   echo ""
   echo "==== $(date -Iseconds) [$label] (budget ${TIME_BUDGET_LEFT:-$(budget_left)}s left) ===="
   "$PYTHON" "$@" || rc=$?
+  # IP 차단(exit 75) — 같은 IP라 후속 step 모두 막힘. 전체 세션 종료(다음 cron 재개).
+  if [ "$rc" = "75" ]; then
+    echo "[IP-BLOCKED] '$label' — courtauction 차단 감지. 후속 step 건너뛰고 종료."
+    exit 0
+  fi
   # 주의: '[ ... ] && echo ...' 단순 패턴은 rc=0 일 때 마지막 expr 이 false 가 되어
   # 함수가 exit 1 로 끝나고 set -e 트리거 → 스크립트 silent kill.
   # if/then/fi 또는 끝에 || true 로 명시.
@@ -98,9 +103,14 @@ drain() {
     fi
     echo ""
     echo "==== $(date -Iseconds) [$label iter=$i] (budget $(budget_left)s left) ===="
-    local out
-    out=$("$PYTHON" "$@" 2>&1) || true
+    local out rc=0
+    out=$("$PYTHON" "$@" 2>&1) || rc=$?
     echo "$out"
+    # IP 차단(exit 75) — 전체 세션 종료 (다음 cron 재개).
+    if [ "$rc" = "75" ]; then
+      echo "[IP-BLOCKED] '$label' — courtauction 차단 감지. 후속 step 건너뛰고 종료."
+      exit 0
+    fi
     # 종결 조건: 'requested': 0  또는  'ok': 0 으로 끝남 또는 candidates: 0
     if echo "$out" | grep -qE "'requested': 0|candidates: 0"; then
       echo "[drain] $label — 처리할 row 없음, 종료"

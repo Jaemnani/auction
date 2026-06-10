@@ -47,9 +47,12 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
 from courtauction import (  # noqa: E402
-    ClientConfig, CourtAuctionClient, Store,
+    ClientConfig, CourtAuctionClient, IpBlocked, Store,
 )
 from courtauction.store import PHOTO_BUCKET  # noqa: E402
+
+# IP 차단으로 세션 종료 시 exit code — run_daily.sh 가 감지해 후속 step 건너뜀.
+EXIT_IP_BLOCKED = 75
 
 CRAWLER_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = CRAWLER_ROOT / "data"
@@ -1113,7 +1116,13 @@ def main() -> None:
     p_r.set_defaults(func=cmd_sales_results)
 
     args = ap.parse_args()
-    asyncio.run(args.func(args))
+    try:
+        asyncio.run(args.func(args))
+    except IpBlocked as e:
+        # courtauction IP 차단 — 같은 IP라 후속 step 도 모두 막힘.
+        # 부분 적재분은 보존됨(페이지 단위 upsert). 다음 실행에서 재개.
+        print(f"\n[IP-BLOCKED] {e}", file=sys.stderr)
+        sys.exit(EXIT_IP_BLOCKED)
 
 
 if __name__ == "__main__":
