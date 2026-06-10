@@ -197,6 +197,14 @@ class Store:
             cfg = StoreConfig(url=url, key=key)
         self.cfg = cfg
         self.sb: Client = create_client(cfg.url, cfg.key)
+        # 사진 저장소 — MINIO_ENDPOINT 있으면 MinIO, 없으면 Supabase Storage.
+        import sys
+        from pathlib import Path
+        _src = str(Path(__file__).resolve().parent.parent)
+        if _src not in sys.path:
+            sys.path.insert(0, _src)
+        from storage_backend import make_storage  # noqa: E402
+        self._storage = make_storage(self.sb)
 
     # ---------- masters ----------
 
@@ -773,20 +781,13 @@ class Store:
             raise ValueError("decoded blob too small (<100 bytes)")
 
         # 1) 원본
-        self.sb.storage.from_(PHOTO_BUCKET).upload(
-            path=path,
-            file=blob,
-            file_options={"content-type": content_type, "upsert": "true"},
-        )
+        self._storage.upload(PHOTO_BUCKET, path, blob, content_type)
 
         # 2) 썸네일 (실패해도 원본은 살아있어야 하므로 try-block)
         try:
             thumb_blob = self._make_thumb(blob)
-            self.sb.storage.from_(PHOTO_BUCKET).upload(
-                path=THUMB_PREFIX + path,
-                file=thumb_blob,
-                file_options={"content-type": "image/jpeg", "upsert": "true"},
-            )
+            self._storage.upload(PHOTO_BUCKET, THUMB_PREFIX + path,
+                                 thumb_blob, "image/jpeg")
         except Exception as e:
             logger.warning("thumb gen/upload failed for %s: %s", path, e)
 
@@ -812,11 +813,10 @@ class Store:
             return buf.getvalue()
 
     def public_photo_url(self, storage_path: str) -> str:
-        return self.sb.storage.from_(PHOTO_BUCKET).get_public_url(storage_path)
+        return self._storage.public_url(PHOTO_BUCKET, storage_path)
 
     def public_thumb_url(self, storage_path: str) -> str:
-        return self.sb.storage.from_(PHOTO_BUCKET).get_public_url(
-            THUMB_PREFIX + storage_path)
+        return self._storage.public_url(PHOTO_BUCKET, THUMB_PREFIX + storage_path)
 
     # ---------- close-aged (종결 매물 soft delete) ----------
 

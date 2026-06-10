@@ -19,9 +19,20 @@ export const supabase = createClient(url, anonKey, {
   auth: { persistSession: false },
 });
 
-/** Supabase Storage 공개 URL — anon 읽기 정책이 있어야 동작. */
+// 사진 공개 URL 베이스.
+//  - self-host (MinIO): STORAGE_PUBLIC_URL = https://files.<domain>  → {base}/{bucket}/{path}
+//  - Supabase (구): STORAGE_PUBLIC_URL 없으면 기존 형식으로 fallback.
+const storagePublicBase =
+  process.env.STORAGE_PUBLIC_URL || process.env.NEXT_PUBLIC_STORAGE_PUBLIC_URL;
+
+/** 사진 공개 URL. MinIO(self-host) 우선, 없으면 Supabase Storage 형식 fallback. */
 export function publicStorageUrl(bucket: string, path: string): string {
+  if (storagePublicBase) {
+    return `${storagePublicBase.replace(/\/$/, "")}/${bucket}/${path}`;
+  }
+  // Supabase Storage 형식 (STORAGE_PUBLIC_URL 미설정 시)
   return `${url}/storage/v1/object/public/${bucket}/${path}`;
 }
 
+export const PHOTO_BUCKET = "auction-photos";
 export const JP_PHOTO_BUCKET = "jp-auction-photos";

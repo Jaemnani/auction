@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
@@ -328,15 +328,14 @@ export async function fetchAuctionStats(
   }
 }
 
-// Storage public URL (원본)
+// Storage public URL (원본) — MinIO(self-host)/Supabase 공용 헬퍼 사용.
 export function photoPublicUrl(storagePath: string): string {
-  return supabase.storage.from("auction-photos").getPublicUrl(storagePath).data.publicUrl;
+  return publicStorageUrl(PHOTO_BUCKET, storagePath);
 }
 
 // Storage public URL (썸네일 — thumbs/{path})
 export function photoThumbUrl(storagePath: string): string {
-  return supabase.storage.from("auction-photos")
-    .getPublicUrl(`thumbs/${storagePath}`).data.publicUrl;
+  return publicStorageUrl(PHOTO_BUCKET, `thumbs/${storagePath}`);
 }
 
 // ---------- 마스터 ----------

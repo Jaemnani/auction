@@ -104,6 +104,14 @@ class BitStore:
             cfg = BitStoreConfig(url=url, key=key)
         self.cfg = cfg
         self.sb: Client = create_client(cfg.url, cfg.key)
+        # 사진 저장소 — MINIO_ENDPOINT 있으면 MinIO, 없으면 Supabase Storage.
+        import sys
+        from pathlib import Path
+        _src = str(Path(__file__).resolve().parent.parent)
+        if _src not in sys.path:
+            sys.path.insert(0, _src)
+        from storage_backend import make_storage  # noqa: E402
+        self._storage = make_storage(self.sb)
 
     # ---------- masters ----------
 
@@ -421,10 +429,7 @@ class BitStore:
 
         path = self._photo_storage_path(sale_unit_id, seq)
         try:
-            self.sb.storage.from_(JP_PHOTO_BUCKET).upload(
-                path=path, file=content,
-                file_options={"content-type": "image/jpeg", "upsert": "true"},
-            )
+            self._storage.upload(JP_PHOTO_BUCKET, path, content, "image/jpeg")
         except Exception as e:
             logger.warning("photo upload failed %s: %s", path, e)
             return None
@@ -437,10 +442,8 @@ class BitStore:
                 buf = io.BytesIO()
                 img.convert("RGB").save(buf, "JPEG", quality=THUMB_QUALITY)
                 thumb_path = self._thumb_storage_path(sale_unit_id, seq)
-                self.sb.storage.from_(JP_PHOTO_BUCKET).upload(
-                    path=thumb_path, file=buf.getvalue(),
-                    file_options={"content-type": "image/jpeg", "upsert": "true"},
-                )
+                self._storage.upload(JP_PHOTO_BUCKET, thumb_path,
+                                     buf.getvalue(), "image/jpeg")
             except Exception as e:
                 logger.warning("thumb gen failed %s: %s", path, e)
                 thumb_path = None
