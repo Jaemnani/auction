@@ -1,0 +1,107 @@
+# auction self-hosted backend — Synology DS918+ (Container Manager / DSM 7.2)
+#
+# 구성: Postgres+PostGIS / PostgREST(supabase-js 호환 REST) / MinIO(사진) / Caddy(라우팅)
+# pgAdmin 은 profile=admin 일 때만 (평소 꺼둠).
+#
+# 실행:
+#   cd /volume1/docker/auction
+#   cp .env.example .env   # 그 다음 .env 의 비밀번호들 채우기 (README 5장)
+#   sudo docker compose up -d
+#   # admin UI 필요할 때만:
+#   sudo docker compose --profile admin up -d pgadmin
+#
+# 메모리 합계 ~2.5~3GB. 다른 패키지(Surveillance/WordPress 등)와 공존 고려해 mem_limit 지정.
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: auction-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data
+      # 최초 1회 자동 실행 (DB 가 비어있을 때만). 역할(anon 등) 생성 — 마이그레이션 선행.
+      - ./bootstrap:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
+    mem_limit: 2g
+    # DB 포트는 외부 노출 금지 — LAN 내부에서 psql/pgAdmin 접근만 필요하면 아래 주석 해제.
+    # ports: ["5432:5432"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: auction-rest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_MAX_ROWS: "1000"
+      # PostgREST 가 스키마 변경(마이그레이션) 후 캐시 갱신하도록
+      PGRST_DB_POOL: "10"
+    mem_limit: 256m
+    networks: [internal]
+
+  storage:
+    image: minio/minio:latest
+    container_name: auction-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./volumes/storage:/data
+    mem_limit: 512m
+    # 콘솔(9001)·API(9000) — LAN 내부 접근용. 외부는 Cloudflare Tunnel(files.*)로만.
+    ports:
+      - "9000:9000"   # S3 API — 크롤러(LAN) + Tunnel(files.*) 진입
+      - "9001:9001"   # MinIO 콘솔 — LAN 내부 관리용
+    networks: [internal]
+
+  proxy:
+    image: caddy:2
+    container_name: auction-proxy
+    restart: unless-stopped
+    depends_on: [rest]
+    ports:
+      # Cloudflare Tunnel(cloudflared)이 이 포트로 api.* 를 보냄.
+      # LAN 내부 크롤러/dev 도 http://<NAS_IP>:8080/rest/v1/* 로 직접 접근.
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./volumes/caddy/data:/data
+      - ./volumes/caddy/config:/config
+    mem_limit: 128m
+    networks: [internal]
+
+  # 경량 DB admin — 필요할 때만: docker compose --profile admin up -d pgadmin
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: auction-pgadmin
+    restart: unless-stopped
+    profiles: ["admin"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"   # LAN 내부만. 외부 포트포워딩 금지.
+    mem_limit: 300m
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge

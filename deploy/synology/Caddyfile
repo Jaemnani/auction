@@ -1,0 +1,23 @@
+# Caddy — supabase-js 호환 라우팅 (Supabase Kong 게이트웨이 대체)
+#
+# supabase-js 는 ${SUPABASE_URL}/rest/v1/<table> 경로로 호출한다.
+# 따라서 /rest/v1/* 를 PostgREST 루트(/)로 prefix 제거 매핑해야 한다.
+# (이게 빠지면 web/crawler 의 "URL 한 줄 변경" 이 동작 안 함.)
+#
+# Cloudflare Tunnel 이 TLS 를 종단하므로 Caddy 는 평문 :80 으로 받는다.
+# LAN 내부 크롤러/dev 도 http://<NAS_IP>:8080/rest/v1/* 로 직접 들어온다.
+
+:80 {
+	# supabase-js REST 호출 → PostgREST (prefix 제거)
+	handle_path /rest/v1/* {
+		reverse_proxy rest:3000
+	}
+
+	# 헬스체크
+	respond /health 200
+
+	# 그 외 경로는 명확한 404 (디버깅 편의)
+	handle {
+		respond "auction backend — use /rest/v1/*" 404
+	}
+}
