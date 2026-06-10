@@ -25,7 +25,7 @@ echo "container:  $CONTAINER"
 echo "migrations: $MIGRATIONS_DIR"
 
 if ! sudo docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
-  echo "[fatal] container '$CONTAINER' not running. 'docker compose up -d' 먼저."
+  echo "[fatal] container '$CONTAINER' not running. 'docker-compose up -d' 먼저."
   exit 1
 fi
 

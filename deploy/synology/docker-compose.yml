@@ -6,9 +6,9 @@
 # 실행:
 #   cd /volume1/docker/auction
 #   cp .env.example .env   # 그 다음 .env 의 비밀번호들 채우기 (README 5장)
-#   sudo docker compose up -d
+#   sudo docker-compose up -d
 #   # admin UI 필요할 때만:
-#   sudo docker compose --profile admin up -d pgadmin
+#   sudo docker-compose --profile admin up -d pgadmin
 #
 # 메모리 합계 ~2.5~3GB. 다른 패키지(Surveillance/WordPress 등)와 공존 고려해 mem_limit 지정.
 
@@ -87,7 +87,7 @@ services:
     mem_limit: 128m
     networks: [internal]
 
-  # 경량 DB admin — 필요할 때만: docker compose --profile admin up -d pgadmin
+  # 경량 DB admin — 필요할 때만: docker-compose --profile admin up -d pgadmin
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: auction-pgadmin

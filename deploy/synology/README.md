@@ -30,6 +30,13 @@ echo "MINIO_ROOT_USER=auctionadmin"
 echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)"
 echo "PGADMIN_PASSWORD=$(openssl rand -hex 12)"
 
+POSTGRES_PASSWORD=
+AUTHENTICATOR_PASSWORD=
+JWT_SECRET=
+MINIO_ROOT_USER=
+MINIO_ROOT_PASSWORD=
+PGADMIN_PASSWORD=
+
 vi .env   # 위 값 붙여넣기
 ```
 
@@ -48,9 +55,9 @@ grep "password" bootstrap/00_roles.sql   # 치환 확인
 ## 4. 컨테이너 기동
 
 ```bash
-sudo docker compose up -d
-sudo docker compose ps          # db/rest/storage/proxy 가 healthy/running
-sudo docker compose logs -f db  # "database system is ready" 확인 후 Ctrl-C
+sudo docker-compose up -d
+sudo docker-compose ps          # db/rest/storage/proxy 가 healthy/running
+sudo docker-compose logs -f db  # "database system is ready" 확인 후 Ctrl-C
 ```
 
 bootstrap/00_roles.sql 은 **DB 최초 생성 시 자동 실행**. 확인:

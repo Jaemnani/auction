@@ -5,7 +5,7 @@
 -- 마이그레이션(0001~) 이 'to anon, authenticated' role 을 참조하므로 반드시 선행.
 --
 -- 주의: 'CHANGE_ME_SAME_AS_ENV' 를 .env 의 AUTHENTICATOR_PASSWORD 와 동일하게.
---       (docker compose 가 initdb 시 이 파일을 그대로 실행 — 변수 치환 안 됨.
+--       (docker-compose 가 initdb 시 이 파일을 그대로 실행 — 변수 치환 안 됨.
 --        README 4장에서 sed 로 치환하는 단계 제공.)
 -- ============================================================================
 
