@@ -54,7 +54,13 @@ grep "password" bootstrap/00_roles.sql   # 치환 확인
 
 ## 4. 컨테이너 기동
 
+> ⚠️ docker-compose v1(하이픈)은 bind mount 디렉토리를 자동 생성하지 않는다.
+> `volumes/` 는 git 에서 제외돼 NAS 에 없으므로 **먼저 만든다**.
+
 ```bash
+# bind mount 디렉토리 생성 (작업 디렉토리 deploy/synology 기준 상대경로)
+mkdir -p volumes/db/data volumes/storage volumes/caddy/data volumes/caddy/config
+
 sudo docker-compose up -d
 sudo docker-compose ps          # db/rest/storage/proxy 가 healthy/running
 sudo docker-compose logs -f db  # "database system is ready" 확인 후 Ctrl-C
