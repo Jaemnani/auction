@@ -685,9 +685,9 @@ class Store:
             ).execute()
 
         # 사진 목록 — base64는 Storage에 업로드하고 raw에서 제외.
-        # Supabase 무료 5GB 제한 안에 머물기 위해 매물당 첫 1장(대표사진)만.
-        # 환경변수 PHOTOS_PER_PROPERTY로 override 가능 (0=비저장, ""=전체).
-        max_per = os.environ.get("PHOTOS_PER_PROPERTY", "1")
+        # 기본은 전체 사진 적재 (self-host MinIO/시놀로지 = 용량 제한 사실상 없음).
+        # 환경변수 PHOTOS_PER_PROPERTY로 제한 가능 (0=비저장, N=첫 N장, ""=전체/기본).
+        max_per = os.environ.get("PHOTOS_PER_PROPERTY", "")
         all_pics = dma_result.get("csPicLst") or []
         if max_per == "":
             pics = all_pics

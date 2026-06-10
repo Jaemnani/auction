@@ -15,7 +15,7 @@
 #   THUMB_LIMIT=1000      썸네일 생성 1회 처리량
 #   MAX_DRAIN_ITERS=20    drain 루프 최대 반복
 #   TIME_BUDGET=7200      전체 예산 (초). 초과 시 남은 step 건너뜀
-#   PHOTOS_PER_PROPERTY=1 매물당 사진 N장만 저장 (무료 5GB 안전), ""=전체
+#   PHOTOS_PER_PROPERTY=""  매물당 사진 전체 저장 (기본, self-host 용량 자유). N=첫 N장, 0=비저장
 #   SALES_DAYS=7          매각결과 조회 기간 (오늘 기준 N일 전까지)
 #   REVERSE_GEOCODE_LIMIT=2000  Kakao 역지오코딩 1회 처리량 (KAKAO_REST_API_KEY 필요)
 #   PYTHON=/path/...      (기본: 공용 venv)
@@ -63,7 +63,8 @@ PHOTO_LIMIT="${PHOTO_LIMIT:-1000}"
 THUMB_LIMIT="${THUMB_LIMIT:-1000}"
 MAX_DRAIN_ITERS="${MAX_DRAIN_ITERS:-20}"
 TIME_BUDGET="${TIME_BUDGET:-7200}"
-export PHOTOS_PER_PROPERTY="${PHOTOS_PER_PROPERTY:-1}"
+# 기본 "" = 매물당 전체 사진 (self-host MinIO 용량 자유). 제한하려면 PHOTOS_PER_PROPERTY=N
+export PHOTOS_PER_PROPERTY="${PHOTOS_PER_PROPERTY:-}"
 
 START_TS=$(date +%s)
 budget_left() { echo $((TIME_BUDGET - ($(date +%s) - START_TS))); }
@@ -112,7 +113,7 @@ drain() {
 echo "===== courtauction daily run start: $(date -Iseconds) ====="
 echo "log:    $LOG"
 echo "python: $PYTHON"
-echo "court:  ${COURT:-<all>}  PHOTOS_PER_PROPERTY=$PHOTOS_PER_PROPERTY"
+echo "court:  ${COURT:-<all>}  PHOTOS_PER_PROPERTY=${PHOTOS_PER_PROPERTY:-<all>}"
 echo "budget: ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분)"
 
 # search 시작 직전 capture — 이 시각 이전 last_synced_at 매물은 close-aged 대상
