@@ -640,7 +640,7 @@ class Store:
             self.sb.table("properties")
             .select("appraisal_amount,fail_count,usage_lcl_cd,usage_mcl_cd,area_summary,building_summary")
             .eq("id", property_id)
-            .maybeSingle()
+            .maybe_single()
             .execute()
         )
         p_data = prop_now.data or {}
@@ -829,17 +829,29 @@ class Store:
         필터를 쓰므로 UI에서 자동 제외 (soft delete, 추후 복구·통계 가능).
         """
         from datetime import datetime, timezone
-        sel = (
-            self.sb.table("properties")
-            .select("id, last_synced_at")
-            .lt("last_synced_at", since_iso)
-            .is_("deleted_at", "null")
-            .execute()
-        )
-        rows = sel.data or []
-        if not rows:
+        # PostgREST 는 기본 1000행에서 잘림(PGRST_DB_MAX_ROWS) → range 로 전량 페이징.
+        # (이전엔 단일 select 라 만료 매물이 1000건 넘으면 나머지가 영구히 soft-delete
+        #  안 돼 낙찰·취하된 죽은 매물이 UI 에 계속 노출됐음)
+        ids: list = []
+        offset = 0
+        PAGE = 1000
+        while True:
+            sel = (
+                self.sb.table("properties")
+                .select("id")
+                .lt("last_synced_at", since_iso)
+                .is_("deleted_at", "null")
+                .order("id")
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            batch = sel.data or []
+            ids.extend(r["id"] for r in batch)
+            if len(batch) < PAGE:
+                break
+            offset += PAGE
+        if not ids:
             return 0
-        ids = [r["id"] for r in rows]
         now_iso = datetime.now(timezone.utc).isoformat()
         # 1000건씩 chunk update (PostgREST in_ 길이 제한 회피)
         n = 0

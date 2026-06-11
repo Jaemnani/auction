@@ -309,7 +309,7 @@ class BitStore:
             self.sb.table("jp_properties")
             .select("id, sale_standard_price, purchase_possible_price")
             .eq("sale_unit_id", sale_unit_id)
-            .maybeSingle()
+            .maybe_single()
             .execute()
         )
         prev_data = prev.data or {}
@@ -382,20 +382,35 @@ class BitStore:
         매일 search-all 시작 시점을 since_iso로 받아 — 이번 갱신에서 등장 안 한 매물은
         BIT에서 사라진 것 → 낙찰 완료/절차 정지로 추정.
         """
-        sel = (
-            self.sb.table("jp_properties")
-            .select("id, sale_unit_id, status, fetched_at")
-            .lt("fetched_at", since_iso)
-            .not_.in_("status", ["closed", "aborted"])
-            .execute()
-        )
-        rows = sel.data or []
-        if not rows:
+        # PostgREST 는 기본 1000행에서 잘림(PGRST_DB_MAX_ROWS) → range 로 전량 페이징.
+        # (이전엔 단일 select 라 만료 매물이 1000건 넘으면 나머지가 영구히 closed 처리
+        #  안 돼 BIT 에서 사라진 죽은 매물이 UI 에 계속 노출됐음)
+        ids: list = []
+        offset = 0
+        PAGE = 1000
+        while True:
+            sel = (
+                self.sb.table("jp_properties")
+                .select("id")
+                .lt("fetched_at", since_iso)
+                .not_.in_("status", ["closed", "aborted"])
+                .order("id")
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            batch = sel.data or []
+            ids.extend(r["id"] for r in batch)
+            if len(batch) < PAGE:
+                break
+            offset += PAGE
+        if not ids:
             return 0
-        ids = [r["id"] for r in rows]
-        self.sb.table("jp_properties").update({"status": "closed"}).in_(
-            "id", ids,
-        ).execute()
+        # 1000건씩 chunk update (PostgREST in_ 길이 제한 회피)
+        for i in range(0, len(ids), 1000):
+            chunk = ids[i:i + 1000]
+            self.sb.table("jp_properties").update({"status": "closed"}).in_(
+                "id", chunk,
+            ).execute()
         logger.info("closed %d aged properties (fetched_at < %s)", len(ids), since_iso)
         return len(ids)
 
