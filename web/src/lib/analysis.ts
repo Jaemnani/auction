@@ -106,22 +106,25 @@ export function parseCaseStatus(
   if (prog.endsWith("0002")) return { label: "변경", level: "warn" };
   if (prog.endsWith("0003")) return { label: "정지", level: "danger" };
   if (prog.endsWith("0004")) return { label: "취하", level: "danger" };
-  return { label: `상태(${prog})`, level: "ok" };
+  // 미확인 코드는 "안전(ok/초록)"으로 단정하지 않음 — 사용자가 직접 확인하도록 warn 표시.
+  return { label: "상태 미상", level: "warn" };
 }
 
 // D-day — 매각기일까지 남은 일수
 export function dDay(saleDate: string | null | undefined): number | null {
   if (!saleDate) return null;
-  const d = new Date(saleDate + "T00:00:00+09:00");
-  if (isNaN(d.getTime())) return null;
-  const now = new Date();
-  // KST 자정 기준
-  const today = new Date(
-    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
+  // saleDate 는 KST 달력상 날짜(YYYY-MM-DD). 양쪽 모두 "UTC 자정에 고정한 날짜값"으로
+  // 환산해 날짜-단위로만 빼면 서버 타임존과 무관하게 정확. (이전엔 d 에 +09:00 을 넣고
+  // 다시 -9h 를 빼 오프셋을 이중 적용 → UTC 서버 자정 부근에서 하루 어긋났음)
+  const sale = Date.parse(saleDate + "T00:00:00Z");
+  if (isNaN(sale)) return null;
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000); // KST 벽시계
+  const todayKst = Date.UTC(
+    nowKst.getUTCFullYear(),
+    nowKst.getUTCMonth(),
+    nowKst.getUTCDate(),
   );
-  return Math.round(
-    (d.getTime() - today.getTime() - 9 * 3600 * 1000) / (24 * 3600 * 1000),
-  );
+  return Math.round((sale - todayKst) / (24 * 3600 * 1000));
 }
 
 export function fmtDDay(n: number | null): string {

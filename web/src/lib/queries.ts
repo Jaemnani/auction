@@ -10,7 +10,7 @@ const LIST_PROPERTY_SELECT = `
   usage_lcl_cd, usage_mcl_cd, usage_scl_cd, usage_nm, derived_category,
   sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
   building_summary, area_summary, longitude, latitude, detail_synced_at,
-  cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
+  cases:case_id!inner ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                   courts:court_code ( code, name ) ),
   property_photos ( seq, storage_path )
 `;
@@ -108,7 +108,7 @@ export async function fetchProperties(
 
   let q: FilterableQuery = supabase
     .from("properties")
-    .select(LIST_PROPERTY_SELECT, { count: "estimated" })
+    .select(LIST_PROPERTY_SELECT, { count: "exact" })
     .is("deleted_at", null);
   q = applyFilters(q, filters);
 
