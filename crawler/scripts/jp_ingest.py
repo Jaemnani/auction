@@ -214,31 +214,62 @@ async def cmd_search_all(args: argparse.Namespace) -> None:
 # ---------- photos ----------
 
 async def cmd_photos(args: argparse.Namespace) -> None:
-    store = BitStore()
-    sel = (
-        store.sb.table("jp_properties")
-        .select("sale_unit_id,search_row")
-        .limit(args.limit)
-        .execute()
-    )
-    rows = sel.data or []
-    if not rows:
-        print("no jp_properties rows")
-        return
+    """사진 미수집 매물만 처리 — 이미 jp_property_photos 에 있으면 skip.
 
+    이전엔 정렬·필터 없이 limit 개를 매번 다시 받아 (a) 이미 받은 것 중복
+    다운로드 (b) drain 루프가 앞쪽만 반복하고 뒤쪽 누락. 키셋 페이징 + 이미
+    받은 property_id 집합 제외로 해결.
+    """
+    store = BitStore()
+
+    # 이미 사진 있는 property_id 집합 (jp_property_photos.property_id = jp_properties.id)
+    done_ids: set = set()
+    off = 0
+    while True:
+        r = store.sb.table("jp_property_photos").select("property_id") \
+            .range(off, off + 999).execute()
+        d = r.data or []
+        if not d:
+            break
+        done_ids.update(x["property_id"] for x in d if x.get("property_id"))
+        if len(d) < 1000:
+            break
+        off += 1000
+
+    # 사진 안 받은 매물만 — sale_unit_id 키셋 페이징으로 전체 순회
     n_ok = 0
-    for row in rows:
-        sale_unit_id = row["sale_unit_id"]
-        sr = row.get("search_row") or {}
-        photo_url = sr.get("photo_url") if isinstance(sr, dict) else None
-        if not photo_url:
-            continue
-        seq = (sr.get("photo_meta") or {}).get("seq") or 1
-        rec = store.upload_photo_from_url(sale_unit_id, seq, photo_url)
-        if rec:
-            n_ok += 1
-            logger.info("photo ok: %s seq=%d", sale_unit_id, seq)
-    print(f"DONE: {n_ok} photos uploaded")
+    n_seen = 0
+    last = ""
+    while n_ok < args.limit:
+        q = (
+            store.sb.table("jp_properties")
+            .select("id,sale_unit_id,search_row")
+            .order("sale_unit_id")
+            .gt("sale_unit_id", last)
+            .limit(200)
+            .execute()
+        )
+        rows = q.data or []
+        if not rows:
+            break
+        for row in rows:
+            last = row["sale_unit_id"]
+            n_seen += 1
+            if row.get("id") in done_ids:
+                continue  # 이미 사진 있음
+            sr = row.get("search_row") or {}
+            photo_url = sr.get("photo_url") if isinstance(sr, dict) else None
+            if not photo_url:
+                continue
+            seq = (sr.get("photo_meta") or {}).get("seq") or 1
+            rec = store.upload_photo_from_url(row["sale_unit_id"], seq, photo_url)
+            if rec:
+                n_ok += 1
+                logger.info("photo ok: %s seq=%d", row["sale_unit_id"], seq)
+            if n_ok >= args.limit:
+                break
+
+    print(f"DONE: {n_ok} photos uploaded (seen {n_seen}, already-had {len(done_ids)})")
 
 
 # ---------- backfill-details ----------
