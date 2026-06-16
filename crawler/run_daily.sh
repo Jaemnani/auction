@@ -149,17 +149,14 @@ fi
 drain "backfill-details" crawler/scripts/ingest.py backfill-details \
   --limit "$DETAIL_LIMIT" ${COURT:+--court "$COURT"}
 
-# 4) 사진 base64 → Storage
-drain "backfill-photos" crawler/scripts/ingest.py backfill-photos --limit "$PHOTO_LIMIT"
-
-# 5) 썸네일 생성
-drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUMB_LIMIT"
-
-# 6) 좌표/주소 후처리 (한 번이면 끝)
+# 4) 좌표/주소 후처리 (한 번이면 끝) — 주소는 UX 핵심이라 사진보다 먼저.
 step "backfill-coords" crawler/scripts/ingest.py backfill-coords
 step "backfill-addrs"  crawler/scripts/ingest.py backfill-addrs
 
-# 6b) Kakao 역지오코딩 — 도로명 누락 매물 보강 (KAKAO_REST_API_KEY 필요)
+# 5) Kakao 역지오코딩 — 도로명 누락 매물 보강 (KAKAO_REST_API_KEY 필요).
+#    courtauction 검색은 도로명을 ~10%만 주므로 나머지는 좌표→주소로 채운다.
+#    courtauction을 안 건드려 IP 차단 위험이 없고 빠르다 → 사진 drain보다 앞에 둬서
+#    TIME_BUDGET 소진 전에 반드시 실행되게 한다 (이전엔 맨 뒤라 매번 skip됐음).
 if [ -n "${KAKAO_REST_API_KEY:-}" ]; then
   RG_LIMIT="${REVERSE_GEOCODE_LIMIT:-2000}"
   drain "reverse-geocode" crawler/scripts/ingest.py reverse-geocode \
@@ -167,6 +164,12 @@ if [ -n "${KAKAO_REST_API_KEY:-}" ]; then
 else
   echo "[skip] reverse-geocode — KAKAO_REST_API_KEY not set"
 fi
+
+# 6) 사진 base64 → Storage
+drain "backfill-photos" crawler/scripts/ingest.py backfill-photos --limit "$PHOTO_LIMIT"
+
+# 6b) 썸네일 생성
+drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUMB_LIMIT"
 
 # 7) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
 # SALES_DAYS 환경변수로 조회 기간 조정 가능 (기본: 7일 = 어제~오늘 새 매각결과)

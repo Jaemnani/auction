@@ -97,17 +97,25 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
             {cs?.case_no} {p.maemul_ser > 1 && <span className="text-muted-foreground">#{p.maemul_ser}</span>}
           </h1>
         <div className="mt-1 text-sm">
+          {/* 주소 우선순위: 도로명 > 지번 > 행정구역. conv_addr은 '[집합건물…㎡]' 같은
+              구조 설명이라 주소가 아니므로 주소 줄에 쓰지 않는다 (아래 별도 표시). */}
           {p.road_addr ? (
             <span className="font-medium">{p.road_addr}</span>
+          ) : p.lot_addr ? (
+            <span className="font-medium">{p.lot_addr}</span>
+          ) : regionParts ? (
+            <span className="font-medium">{regionParts}</span>
           ) : (
-            <>
-              {regionParts && <span className="mr-2 text-muted-foreground">{regionParts}</span>}
-              <span className="text-muted-foreground"><AreaText>{p.conv_addr ?? "-"}</AreaText></span>
-            </>
+            <span className="text-muted-foreground">주소 정보 없음</span>
           )}
         </div>
         {p.road_addr && p.lot_addr && p.lot_addr !== p.road_addr && (
           <div className="text-xs text-muted-foreground mt-0.5">지번 {p.lot_addr}</div>
+        )}
+        {p.conv_addr && (
+          <div className="text-xs text-muted-foreground mt-0.5">
+            <AreaText>{p.conv_addr}</AreaText>
+          </div>
         )}
         </div>
         <ExportButtons markdown={markdown} filename={mdFilename} />

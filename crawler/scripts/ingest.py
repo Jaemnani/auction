@@ -509,7 +509,7 @@ async def cmd_backfill_coords(args: argparse.Namespace) -> None:
 
 async def cmd_backfill_addrs(args: argparse.Namespace) -> None:
     """기존 properties.search_row의 주소 필드를 road_addr/lot_addr로 채움."""
-    from courtauction.store import _clean_addr
+    from courtauction.store import _clean_addr, _road_addr
 
     store = Store()
     run_id = store.start_run("backfill_addrs", {"limit": args.limit})
@@ -526,17 +526,19 @@ async def cmd_backfill_addrs(args: argparse.Namespace) -> None:
 
     for t in targets:
         sr = t.get("search_row") or {}
-        road = _clean_addr(sr.get("bgPlaceRdAllAddr") or sr.get("rdAllAddr"))
+        road = _road_addr(sr)
         lot  = _clean_addr(sr.get("bgPlaceLotAllAddr") or sr.get("lotAllAddr"))
-        if not road and not lot:
-            totals["skipped"] += 1
+        # 비파괴 — search_row에 값이 있을 때만 갱신. None으로 덮어쓰면 reverse-geocode가
+        # Kakao로 채운 주소를 날려버리므로 (특히 lot_addr은 search 응답에 거의 없음).
+        payload: dict = {}
+        if road and road != t.get("road_addr"):
+            payload["road_addr"] = road
+        if lot and lot != t.get("lot_addr"):
+            payload["lot_addr"] = lot
+        if not payload:
+            totals["noop" if (road or lot) else "skipped"] += 1
             continue
-        if road == t.get("road_addr") and lot == t.get("lot_addr"):
-            totals["noop"] += 1
-            continue
-        store.sb.table("properties").update(
-            {"road_addr": road, "lot_addr": lot}
-        ).eq("id", t["id"]).execute()
+        store.sb.table("properties").update(payload).eq("id", t["id"]).execute()
         totals["updated"] += 1
 
     store.finish_run(run_id, totals=totals)

@@ -30,11 +30,15 @@ export function PropertyLocation({ lng, lat, addr }: Props) {
     return () => { map.remove(); mapRef.current = null; };
   }, [lng, lat]);
 
-  // 외부 지도 URL — 주소가 있으면 텍스트 검색(핀 + 정보 표시 잘됨), 없으면 좌표
+  // 외부 지도 URL — 주소가 있으면 텍스트 검색(핀 + 정보 표시 잘됨), 없으면 좌표.
+  // 좌표 폴백도 각 앱에서 핀이 찍히는 형식 사용:
+  //   네이버: /p/search/{lat},{lng} — 좌표 문자열 검색이 정확히 그 지점에 핀
+  //   카카오: /link/map/{이름},{lat},{lng} — 라벨 핀
+  //   구글:   ?q={lat},{lng} — 핀
   const q = addr?.trim();
   const naver = q
     ? `https://map.naver.com/p/search/${encodeURIComponent(q)}`
-    : `https://map.naver.com/p/?c=${lng},${lat},17,0,0,0,0`;
+    : `https://map.naver.com/p/search/${encodeURIComponent(`${lat},${lng}`)}`;
   const kakao = q
     ? `https://map.kakao.com/?q=${encodeURIComponent(q)}`
     : `https://map.kakao.com/link/map/매물,${lat},${lng}`;

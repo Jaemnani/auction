@@ -150,6 +150,25 @@ def _clean_addr(s: Any) -> str | None:
     return s.strip() or None
 
 
+def _road_addr(row: dict) -> str | None:
+    """도로명 전체주소에 건물명(법정동) 결합.
+
+    courtauction은 도로명 본주소(bgPlaceRdAllAddr)와 건물명 부가정보(rdAddrSub)를
+    분리해서 준다. 본주소만 쓰면 네이버/카카오 검색이 '길'까지만 잡고 건물을 못 찾는다.
+    예: '서울특별시 관악구 남현3길 00039-00000' + '(남현동,씨에스타운)'
+        → '서울특별시 관악구 남현3길 39 (남현동, 씨에스타운)'
+    """
+    base = _clean_addr(row.get("bgPlaceRdAllAddr") or row.get("rdAllAddr"))
+    if not base:
+        return None
+    sub = _str(row.get("rdAddrSub"))
+    if sub:
+        sub = re.sub(r",\s*", ", ", sub)  # '(동,건물)' → '(동, 건물)'
+        if sub not in base:
+            base = f"{base} {sub}"
+    return base
+
+
 def _lnglat_payload(row: dict) -> dict:
     """search row → {longitude, latitude} payload (KATEC 우선, 실패시 wgs84 정수)."""
     katec = katec_to_wgs84(row.get("xCordi"), row.get("yCordi"))
@@ -343,8 +362,7 @@ class Store:
             "rd_code": _str(row.get("daepyoRdCd")),
             "lot_no": _str(row.get("daepyoLotno")),
             "conv_addr": _str(row.get("convAddr") or row.get("daepyoAddr")),
-            "road_addr": _clean_addr(row.get("bgPlaceRdAllAddr")
-                                     or row.get("rdAllAddr")),
+            "road_addr": _road_addr(row),
             "lot_addr": _clean_addr(row.get("bgPlaceLotAllAddr")
                                     or row.get("lotAllAddr")),
             "building_summary": _str(row.get("buldList")),
@@ -402,7 +420,7 @@ class Store:
                 "sgg_code": _str(r.get("daepyoSiguCd") or r.get("daepyoSggCd")),
                 "emd_code": _str(r.get("daepyoDongCd") or r.get("daepyoEmdCd")),
                 "conv_addr": _str(r.get("convAddr") or r.get("daepyoAddr")),
-                "road_addr": _clean_addr(r.get("bgPlaceRdAllAddr") or r.get("rdAllAddr")),
+                "road_addr": _road_addr(r),
                 "building_summary": _str(r.get("buldList")),
                 **(_lnglat_payload(r)),
                 "raw": r,
@@ -512,7 +530,7 @@ class Store:
                 "rd_code": _str(r.get("daepyoRdCd")),
                 "lot_no": _str(r.get("daepyoLotno")),
                 "conv_addr": _str(r.get("convAddr") or r.get("daepyoAddr")),
-                "road_addr": _clean_addr(r.get("bgPlaceRdAllAddr") or r.get("rdAllAddr")),
+                "road_addr": _road_addr(r),
                 "lot_addr":  _clean_addr(r.get("bgPlaceLotAllAddr") or r.get("lotAllAddr")),
                 "building_summary": _str(r.get("buldList")),
                 "area_summary":     _str(r.get("areaList")),
