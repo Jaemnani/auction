@@ -163,8 +163,12 @@ MINIO_ACCESS_KEY=<MINIO_ROOT_USER>
 MINIO_SECRET_KEY=<MINIO_ROOT_PASSWORD>
 STORAGE_PUBLIC_URL=https://jeremylab.synology.me/storage
 # 기존 키 유지: DATA_GO_KR_API_KEY / KAKAO_REST_API_KEY / GEMINI_API_KEY
+# Discord 크롤 알림 (선택) — 채널 설정 → 연동 → 웹후크 → '새 웹후크' → URL 복사.
+# run_daily.sh / run_jp_daily.sh 가 시작·종료(요약/에러)를 이 채널로 보냄. 미설정이면 알림 off.
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
 ```
 > 공용 venv 에 boto3 필요: `pip install boto3` (이미 설치됨).
+> Discord 알림 테스트: `DISCORD_WEBHOOK_URL=<url> bash crawler/lib/notify.sh test`
 
 ### Vercel — 환경변수 (외부 DSM 역방향 프록시)
 ```

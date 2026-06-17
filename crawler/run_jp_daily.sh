@@ -48,6 +48,17 @@ set -a
 . "$PROJECT_ROOT/.env"
 set +a
 
+# Discord 알림 (DISCORD_WEBHOOK_URL 설정 시) — 종료 시 요약 1건. 미설정이면 no-op.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/notify.sh"
+_on_exit() {
+  local rc=$?
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  discord_digest "$LOG" "$rc" "$(( $(date +%s) - ${START_TS:-$(date +%s)} ))" \
+    "🇯🇵 BIT 일일 크롤"
+}
+trap _on_exit EXIT
+
 # --- 설정 ---
 DEFAULT_PREFS="91,92,93,94,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47"
 PREFECTURES="${PREFECTURES:-$DEFAULT_PREFS}"
@@ -108,6 +119,9 @@ echo "budget:      ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분)"
 # run 시작 timestamp — 종결 매물(BIT 검색에서 사라진 매물) 자동 close용 기준
 RUN_SINCE_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "since:       $RUN_SINCE_ISO (이 시각 이전 fetched_at 매물은 close-aged 대상)"
+
+discord_send "🇯🇵 **BIT 일일 크롤 시작** — $(date -Iseconds)
+도도부현 ${PREFECTURES} · budget ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분) · 🖥 $(hostname 2>/dev/null)"
 
 # 1) 전국 도도부현 search — 단일 process로 cookie 컨텍스트 격리.
 #    upsert_search_card에서 fetched_at 갱신 → 살아있는 매물 표시.

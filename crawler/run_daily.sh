@@ -54,6 +54,17 @@ set -a
 . "$PROJECT_ROOT/.env"
 set +a
 
+# Discord 알림 (DISCORD_WEBHOOK_URL 설정 시) — 종료 시 요약 1건. 미설정이면 no-op.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/notify.sh"
+_on_exit() {
+  local rc=$?
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  discord_digest "$LOG" "$rc" "$(( $(date +%s) - ${START_TS:-$(date +%s)} ))" \
+    "🇰🇷 courtauction 일일 크롤"
+}
+trap _on_exit EXIT
+
 # --- 설정 ---
 COURT="${COURT:-}"
 PAGE_SIZE="${PAGE_SIZE:-50}"
@@ -130,6 +141,9 @@ echo "budget: ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분)"
 # (search 한 바퀴 돌면 살아있는 매물은 모두 last_synced_at 갱신됨)
 RUN_SINCE_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "since:  $RUN_SINCE_ISO (search 후 이 시각 이전 last_synced_at 매물 → soft delete)"
+
+discord_send "🇰🇷 **courtauction 일일 크롤 시작** — $(date -Iseconds)
+대상: ${COURT:-전국} · budget ${TIME_BUDGET}s ($((TIME_BUDGET / 60))분) · 🖥 $(hostname 2>/dev/null)"
 
 # 1) 마스터 코드 (5초)
 step "masters" crawler/scripts/ingest.py masters
