@@ -48,6 +48,12 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   if (filters.min_fail !== undefined) q = q.gte("fail_count", filters.min_fail);
   if (filters.max_fail !== undefined) q = q.lte("fail_count", filters.max_fail);
 
+  // 매각가율(%) — DB generated column(sale_rate_pct, 마이그레이션 0014)으로 필터.
+  // 감정가 0/NULL 또는 최저가 NULL인 row는 sale_rate_pct=NULL → gte/lte에서 자동 제외
+  // (= 과거 JS 후처리의 "데이터 없으면 제외" 동작과 동일).
+  if (filters.min_rate !== undefined) q = q.gte("sale_rate_pct", filters.min_rate);
+  if (filters.max_rate !== undefined) q = q.lte("sale_rate_pct", filters.max_rate);
+
   if (filters.sale_from) q = q.gte("sale_date", filters.sale_from);
   if (filters.sale_to)   q = q.lte("sale_date", filters.sale_to);
 
@@ -129,10 +135,10 @@ export async function fetchProperties(
     case "fail_asc":
       q = q.order("fail_count", { ascending: true, nullsFirst: false }); break;
     case "discount_desc":
-      // 할인율 = min_sale_price / appraisal — DB에서 계산 어려워 min_sale_price 오름차순 대리
-      q = q.order("min_sale_price", { ascending: true, nullsFirst: false }); break;
+      // 할인율 높은 순 = 매각가율 낮은 순 (sale_rate_pct asc). 마이그레이션 0014.
+      q = q.order("sale_rate_pct", { ascending: true, nullsFirst: false }); break;
     case "discount_asc":
-      q = q.order("min_sale_price", { ascending: false, nullsFirst: false }); break;
+      q = q.order("sale_rate_pct", { ascending: false, nullsFirst: false }); break;
     case "sale_date":
     default:
       q = q.order("sale_date", { ascending: true, nullsFirst: false });
@@ -142,18 +148,9 @@ export async function fetchProperties(
 
   const { data, error, count } = await q;
   if (error) throw error;
-  let rows = (data ?? []) as unknown as Property[];
+  // 매각가율 필터는 이제 DB(sale_rate_pct)에서 적용 → count/페이지네이션 정확.
+  const rows = (data ?? []) as unknown as Property[];
 
-  // 매각가율 후처리 필터 (DB 인덱스 없는 비율 기반)
-  if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
-    const lo = filters.min_rate ?? 0;
-    const hi = filters.max_rate ?? 1000;
-    rows = rows.filter((r) => {
-      if (!r.appraisal_amount || !r.min_sale_price) return false;
-      const rate = (r.min_sale_price / r.appraisal_amount) * 100;
-      return rate >= lo && rate <= hi;
-    });
-  }
   return {
     rows,
     total: count ?? 0,
@@ -412,23 +409,14 @@ export async function fetchPropertiesForMap(
     if (rows.length < lim) break;
     offset += lim;
   }
-  // 한국 영토 박스 필터 + 매각가율 필터 (클라이언트).
+  // 한국 영토 박스 필터 (클라이언트). 매각가율은 applyFilters에서 DB 처리됨.
   // bbox가 명시되면 사용자 viewport이므로 한국 박스 재검사 불필요 (중복 비용).
-  let out = bbox
+  const out = bbox
     ? collected
     : collected.filter((r) =>
         r.longitude !== null && r.latitude !== null
         && r.longitude >= 124 && r.longitude <= 132.5
         && r.latitude  >= 33  && r.latitude  <= 39,
       );
-  if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
-    const lo = filters.min_rate ?? 0;
-    const hi = filters.max_rate ?? 1000;
-    out = out.filter((r) => {
-      if (!r.appraisal_amount || !r.min_sale_price) return false;
-      const rate = (r.min_sale_price / r.appraisal_amount) * 100;
-      return rate >= lo && rate <= hi;
-    });
-  }
   return out;
 }
