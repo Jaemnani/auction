@@ -1,5 +1,6 @@
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
+import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED } from "./filter-flags";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -88,7 +89,8 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
     q = q.in("usage_nm", filters.usage_nm);
   }
   // 파생 카테고리 다중 — derived_category 와 overlap (한 카테고리라도 매칭이면 포함).
-  if (filters.derived && filters.derived.length > 0) {
+  // 현재 비활성(데이터 0건) — DERIVED_FILTER_ENABLED=false 동안 URL 주입돼도 무시.
+  if (DERIVED_FILTER_ENABLED && filters.derived && filters.derived.length > 0) {
     const safe = filters.derived.filter((c) => /^[a-z_]+$/.test(c));
     if (safe.length > 0) {
       q = q.overlaps("derived_category", safe);
@@ -100,8 +102,11 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   // → 단순 not.ov 사용 시 NULL row가 결과에서 사라지는 버그.
   // OR로 risk_flags.is.null 케이스를 명시 포함.
   if (filters.exclude_flags && filters.exclude_flags.length > 0) {
-    // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용
-    const safe = filters.exclude_flags.filter((f) => /^[a-z_]+$/.test(f));
+    // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용.
+    // 오분류로 비활성된 코드(DISABLED_RISK_FLAGS)는 URL 주입돼도 무시.
+    const safe = filters.exclude_flags
+      .filter((f) => /^[a-z_]+$/.test(f))
+      .filter((f) => !DISABLED_RISK_FLAGS.has(f));
     if (safe.length > 0) {
       // PostgREST 부정 어순: `col.not.op.val` (← `not.col.op.val` 아님).
       // 잘못된 어순은 "failed to parse logic tree" 400 → exclude 필터 전체가 깨짐 (라이브 검증으로 확인).
