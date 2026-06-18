@@ -568,7 +568,7 @@ async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
             store.sb.table("properties")
             .select(
                 "id, detail_result, appraisal_amount, fail_count, "
-                "usage_lcl_cd, usage_mcl_cd, area_summary, building_summary, risk_flags"
+                "usage_lcl_cd, usage_mcl_cd, usage_nm, area_summary, building_summary, risk_flags"
             )
             .not_.is_("detail_result", "null")
             .order("id")
@@ -595,6 +595,7 @@ async def cmd_backfill_risk_flags(args: argparse.Namespace) -> None:
                 fail_count=r.get("fail_count"),
                 usage_lcl_cd=r.get("usage_lcl_cd"),
                 usage_mcl_cd=r.get("usage_mcl_cd"),
+                usage_nm=r.get("usage_nm"),
                 area_summary=r.get("area_summary"),
                 building_summary=r.get("building_summary"),
             )

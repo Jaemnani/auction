@@ -656,7 +656,7 @@ class Store:
         from .risk_flags import compute_risk_flags  # local import to avoid cycle at module load
         prop_now = (
             self.sb.table("properties")
-            .select("appraisal_amount,fail_count,usage_lcl_cd,usage_mcl_cd,area_summary,building_summary")
+            .select("appraisal_amount,fail_count,usage_lcl_cd,usage_mcl_cd,usage_nm,area_summary,building_summary")
             .eq("id", property_id)
             .maybe_single()
             .execute()
@@ -668,6 +668,7 @@ class Store:
             fail_count=p_data.get("fail_count"),
             usage_lcl_cd=p_data.get("usage_lcl_cd"),
             usage_mcl_cd=p_data.get("usage_mcl_cd"),
+            usage_nm=p_data.get("usage_nm"),
             area_summary=p_data.get("area_summary"),
             building_summary=p_data.get("building_summary"),
         )

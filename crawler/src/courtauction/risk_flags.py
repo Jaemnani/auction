@@ -64,8 +64,10 @@ def _collect_text(detail: dict[str, Any]) -> str:
 _AREA_RE = re.compile(r"([\d.]+)\s*㎡")
 
 
-def _min_area_m2(area_summary: str | None) -> float | None:
-    """area_summary 텍스트에서 ㎡ 숫자들을 추출해 최솟값 반환."""
+def _max_area_m2(area_summary: str | None) -> float | None:
+    """area_summary 텍스트에서 ㎡ 숫자들을 추출해 최댓값(대표 면적) 반환.
+    최솟값을 쓰면 대형 토지+소형 건물 매물이 건물 면적 때문에 초소형으로 오판됨.
+    "초소형"은 가장 큰 면적조차 작을 때만 성립."""
     if not area_summary:
         return None
     matches = _AREA_RE.findall(area_summary)
@@ -75,7 +77,7 @@ def _min_area_m2(area_summary: str | None) -> float | None:
             nums.append(float(m))
         except ValueError:
             pass
-    return min(nums) if nums else None
+    return max(nums) if nums else None
 
 
 def _parse_yyyymmdd(s: Any) -> date | None:
@@ -99,6 +101,7 @@ def compute_risk_flags(
     usage_mcl_cd: str | None,
     area_summary: str | None,
     building_summary: str | None,
+    usage_nm: str | None = None,
 ) -> list[str]:
     """매물 정보 → 위험 플래그 코드 리스트.
 
@@ -117,7 +120,8 @@ def compute_risk_flags(
         flags.add("yuchi")
     if re.search(r"법정\s*지상권", text):
         flags.add("legal_ground")
-    if re.search(r"선순위.{0,8}임차", text) or "대항력" in text:
+    # 선순위 임차 또는 "대항력 있음/인정" — "대항력 없음"(안전)은 제외해야 오탐 안 남.
+    if re.search(r"선순위.{0,8}임차", text) or re.search(r"대항력[^\n]{0,4}(있|존재|인정|발생)", text):
         flags.add("senior_tenant")
     if re.search(r"(임대관계|점유관계).{0,6}미상", text):
         flags.add("rent_unknown")
@@ -166,32 +170,28 @@ def compute_risk_flags(
         if clm_n / float(appraisal_amount) >= 0.9:
             flags.add("claim_90")
 
-    # 정지/연기/취하 — csBaseInfo.csProgStatCd 또는 ultmtDvsCd
+    # 정지/연기 — csBaseInfo.auctnSuspStatCd 구조적 코드로 판정.
+    #   실측 분포: '00'(정상 대다수) / '03' / '04' = 경매정지 상태. None=미상.
+    #   (구버전은 csProgStatCd in {022,023,030} 가정했으나 실제 코드는 '0002100001' 10자리라
+    #    한 번도 매칭 안 됨 + csBaseInfo 전체 텍스트 "중지" 스캔은 '공사중지' 등 오탐.)
     if isinstance(cs, dict):
-        prog = str(cs.get("csProgStatCd") or "")
-        ultmt = str(cs.get("ultmtDvsCd") or "")
-        # courtauction 상태 코드: 022(정지), 023(연기), 030(취하) 등. 정확 매핑은 코드 표 필요.
-        # 보수적으로 텍스트에서 "정지", "연기", "취하" 검출도 병행.
-        cs_text = " ".join(str(v) for v in cs.values() if isinstance(v, str))
-        if any(k in cs_text for k in ("정지", "연기", "취하", "중지")):
-            flags.add("stopped")
-        # 코드 매칭 (확실한 것만): 022/023/030
-        if prog in {"022", "023", "030"} or ultmt in {"022", "023", "030"}:
+        susp = str(cs.get("auctnSuspStatCd") or "").strip()
+        if susp and susp not in ("00", "000", "0", "None"):
             flags.add("stopped")
 
-    # 농지 — 용도 코드 (대분류 농지 = 농지·전·답)
-    # 코드는 한국 courtauction의 용도 카테고리. 대략: 농지 mcl="20100" (논), "20200" (밭), "20300" (과수원) 등 20000대.
-    if usage_lcl_cd and usage_lcl_cd.startswith("20"):
+    # 농지 / 임야 — usage_nm(한글 용도명)으로 판정.
+    #   토지(lcl=10000)는 mcl이 전부 '10100'으로 동일 → mcl로 전/답/임야 구분 불가.
+    #   판별자는 usage_nm 뿐: '전답'(전·답), '임야', '대지', '대지,임야,전답'(혼합) 등.
+    #   (구버전 startswith("20")는 lcl=20000(건물) 전체를 농지로 오태깅했음.)
+    nm = usage_nm or ""
+    if "전답" in nm:                       # '전답' 또는 '대지,임야,전답' (농지 포함 필지)
         flags.add("farm_land")
-    # 임야 단독 (mcl 임야)
-    if usage_mcl_cd and ("30" in usage_mcl_cd[:4]):  # 임야 분류 30000대 가정
-        # 추가 검증: building_summary가 비어있어야 단독 임야
-        if not building_summary or not building_summary.strip():
-            flags.add("forest_only")
+    if nm == "임야":                       # 단독 임야만 (혼합 필지 제외)
+        flags.add("forest_only")
 
-    # 초소형 (30㎡ 이하)
-    min_area = _min_area_m2(area_summary)
-    if min_area is not None and min_area <= 30.0:
+    # 초소형 (30㎡ 이하) — 대표(최대) 면적 기준
+    max_area = _max_area_m2(area_summary)
+    if max_area is not None and max_area <= 30.0:
         flags.add("tiny_area")
 
     # 신축 빌라 — building_summary에 "신축" 또는 detail의 건축 연도가 5년 이내
@@ -200,6 +200,9 @@ def compute_risk_flags(
         usage_mcl_cd in {"10101", "10102", "10103", "10104", "10105"}  # 다세대/연립/오피스텔 등 가정
         or any(k in bs for k in ("빌라", "다세대", "연립"))
     )
+    if is_residential and "신축" in (bs + text):
+        # 라벨이 약속한 "신축" 키워드 — 연도 없이 명시된 경우도 포착.
+        flags.add("new_villa")
     if is_residential:
         # 건축연도 YYYY 추출 — building_summary "2022년" 등 또는 detail.gdsDspslObjctLst[0].bldDtlDts 등
         years: list[int] = []
