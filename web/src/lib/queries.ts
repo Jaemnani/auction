@@ -103,7 +103,9 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
     // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용
     const safe = filters.exclude_flags.filter((f) => /^[a-z_]+$/.test(f));
     if (safe.length > 0) {
-      q = q.or(`risk_flags.is.null,not.risk_flags.ov.{${safe.join(",")}}`);
+      // PostgREST 부정 어순: `col.not.op.val` (← `not.col.op.val` 아님).
+      // 잘못된 어순은 "failed to parse logic tree" 400 → exclude 필터 전체가 깨짐 (라이브 검증으로 확인).
+      q = q.or(`risk_flags.is.null,risk_flags.not.ov.{${safe.join(",")}}`);
     }
   }
   return q;
