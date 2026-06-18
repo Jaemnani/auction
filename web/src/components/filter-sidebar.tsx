@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import type { PropertyFilters } from "@/lib/types";
+import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED } from "@/lib/filter-flags";
 
 type Option = { code: string; name: string };
 
@@ -447,7 +448,12 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
       <details className="pt-2 border-t" open={(f.derived?.length ?? 0) > 0}>
         <summary className="cursor-pointer text-sm font-medium select-none flex items-center gap-2">
           <span>✨ 파생 카테고리</span>
-          {f.derived && f.derived.length > 0 && (
+          {!DERIVED_FILTER_ENABLED && (
+            <span className="text-xs rounded bg-muted text-muted-foreground px-1.5 py-0.5">
+              준비중
+            </span>
+          )}
+          {DERIVED_FILTER_ENABLED && f.derived && f.derived.length > 0 && (
             <span className="text-xs rounded bg-emerald-100 text-emerald-700 px-1.5 py-0.5">
               {f.derived.length}개 선택
             </span>
@@ -458,23 +464,28 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         </summary>
         <div className="flex flex-wrap gap-1.5 mt-3">
           {DERIVED_OPTIONS.map((o) => {
-            const active = f.derived?.includes(o.code) ?? false;
+            const disabled = !DERIVED_FILTER_ENABLED;
+            const active = !disabled && (f.derived?.includes(o.code) ?? false);
             return (
               <label
                 key={o.code}
-                title={o.desc}
+                title={disabled ? "분류 데이터 준비중 — 곧 제공됩니다" : o.desc}
                 className={
-                  "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 text-xs transition " +
-                  (active
-                    ? "bg-emerald-100 border-emerald-300 text-emerald-800"
-                    : "bg-card border-border hover:bg-muted")
+                  "inline-flex items-center gap-1 select-none rounded border px-2 py-1 text-xs transition " +
+                  (disabled
+                    ? "cursor-not-allowed opacity-50 bg-muted border-border"
+                    : "cursor-pointer " + (active
+                      ? "bg-emerald-100 border-emerald-300 text-emerald-800"
+                      : "bg-card border-border hover:bg-muted"))
                 }
               >
                 <input
                   type="checkbox"
                   className="hidden"
+                  disabled={disabled}
                   checked={active}
                   onChange={(e) => {
+                    if (disabled) return;
                     const prev = f.derived ?? [];
                     const next = e.target.checked
                       ? Array.from(new Set([...prev, o.code]))
@@ -514,22 +525,28 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               <div className="text-xs font-semibold text-muted-foreground mb-1.5">{g.title}</div>
               <div className="flex flex-wrap gap-1.5">
                 {g.items.map((it) => {
-                  const active = f.exclude_flags?.includes(it.code) ?? false;
+                  const disabled = DISABLED_RISK_FLAGS.has(it.code);
+                  const active = !disabled && (f.exclude_flags?.includes(it.code) ?? false);
                   return (
                     <label
                       key={it.code}
+                      title={disabled ? "분류 정확도 보완중 — 일시 비활성화" : undefined}
                       className={
-                        "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 text-xs transition " +
-                        (active
-                          ? "bg-rose-100 border-rose-300 text-rose-700"
-                          : "bg-card border-border hover:bg-muted")
+                        "inline-flex items-center gap-1 select-none rounded border px-2 py-1 text-xs transition " +
+                        (disabled
+                          ? "cursor-not-allowed opacity-50 bg-muted border-border line-through"
+                          : "cursor-pointer " + (active
+                            ? "bg-rose-100 border-rose-300 text-rose-700"
+                            : "bg-card border-border hover:bg-muted"))
                       }
                     >
                       <input
                         type="checkbox"
                         className="hidden"
+                        disabled={disabled}
                         checked={active}
                         onChange={(e) => {
+                          if (disabled) return;
                           const prev = f.exclude_flags ?? [];
                           const next = e.target.checked
                             ? Array.from(new Set([...prev, it.code]))
@@ -537,7 +554,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
                           set("exclude_flags", next.length > 0 ? next : undefined);
                         }}
                       />
-                      <span>{active ? "✕" : "○"}</span>
+                      <span>{active ? "✕" : disabled ? "🚧" : "○"}</span>
                       <span>{it.label}</span>
                     </label>
                   );

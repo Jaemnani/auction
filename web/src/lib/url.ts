@@ -62,7 +62,9 @@ export function buildHref(
   for (const [k, v] of Object.entries(merged)) {
     if (v === undefined || v === null || v === "") continue;
     if (Array.isArray(v)) {
-      if (v.length > 0) params.set(k, v.join(","));
+      // usage_nm 값 자체가 콤마 포함("연립주택,다세대,빌라") → '|' 구분.
+      // parseFiltersFromSearchParams 와 직렬화 규약 일치시킴 (불일치 시 다중선택 손상).
+      if (v.length > 0) params.set(k, v.join(k === "usage_nm" ? "|" : ","));
       continue;
     }
     params.set(k, String(v));

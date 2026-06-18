@@ -1,5 +1,6 @@
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
+import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED } from "./filter-flags";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -48,6 +49,12 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   if (filters.min_fail !== undefined) q = q.gte("fail_count", filters.min_fail);
   if (filters.max_fail !== undefined) q = q.lte("fail_count", filters.max_fail);
 
+  // 매각가율(%) — DB generated column(sale_rate_pct, 마이그레이션 0014)으로 필터.
+  // 감정가 0/NULL 또는 최저가 NULL인 row는 sale_rate_pct=NULL → gte/lte에서 자동 제외
+  // (= 과거 JS 후처리의 "데이터 없으면 제외" 동작과 동일).
+  if (filters.min_rate !== undefined) q = q.gte("sale_rate_pct", filters.min_rate);
+  if (filters.max_rate !== undefined) q = q.lte("sale_rate_pct", filters.max_rate);
+
   if (filters.sale_from) q = q.gte("sale_date", filters.sale_from);
   if (filters.sale_to)   q = q.lte("sale_date", filters.sale_to);
 
@@ -60,14 +67,19 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   else if (filters.addr_state === "no_road") q = q.is("road_addr", null);
 
   if (filters.q && filters.q.trim()) {
-    const kw = filters.q.trim();
-    const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
-    if (looksLikeCaseNo) {
-      q = q.ilike("cases.case_no", `%${kw}%`);
-    } else {
-      q = q.or(
-        `road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,lot_addr.ilike.%${kw}%`,
-      );
+    // PostgREST .or()/.ilike() 문자열에 raw 보간 → 메타문자 injection 위험.
+    //  ',' '(' ')' : 는 or 그룹/연산자 구분자, '%' '_' '\' 는 LIKE 와일드카드/이스케이프,
+    //  '*' 는 PostgREST ilike 와일드카드. 검색어에선 모두 리터럴 의미가 없으므로 공백 치환.
+    const kw = filters.q.trim().replace(/[,()%_\\:*]/g, " ").trim();
+    if (kw) {
+      const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
+      if (looksLikeCaseNo) {
+        q = q.ilike("cases.case_no", `%${kw}%`);
+      } else {
+        q = q.or(
+          `road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,lot_addr.ilike.%${kw}%`,
+        );
+      }
     }
   }
 
@@ -77,7 +89,8 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
     q = q.in("usage_nm", filters.usage_nm);
   }
   // 파생 카테고리 다중 — derived_category 와 overlap (한 카테고리라도 매칭이면 포함).
-  if (filters.derived && filters.derived.length > 0) {
+  // 현재 비활성(데이터 0건) — DERIVED_FILTER_ENABLED=false 동안 URL 주입돼도 무시.
+  if (DERIVED_FILTER_ENABLED && filters.derived && filters.derived.length > 0) {
     const safe = filters.derived.filter((c) => /^[a-z_]+$/.test(c));
     if (safe.length > 0) {
       q = q.overlaps("derived_category", safe);
@@ -89,10 +102,15 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   // → 단순 not.ov 사용 시 NULL row가 결과에서 사라지는 버그.
   // OR로 risk_flags.is.null 케이스를 명시 포함.
   if (filters.exclude_flags && filters.exclude_flags.length > 0) {
-    // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용
-    const safe = filters.exclude_flags.filter((f) => /^[a-z_]+$/.test(f));
+    // 코드는 영문/언더스코어만 — injection 방지차 화이트리스트 검사 후 사용.
+    // 오분류로 비활성된 코드(DISABLED_RISK_FLAGS)는 URL 주입돼도 무시.
+    const safe = filters.exclude_flags
+      .filter((f) => /^[a-z_]+$/.test(f))
+      .filter((f) => !DISABLED_RISK_FLAGS.has(f));
     if (safe.length > 0) {
-      q = q.or(`risk_flags.is.null,not.risk_flags.ov.{${safe.join(",")}}`);
+      // PostgREST 부정 어순: `col.not.op.val` (← `not.col.op.val` 아님).
+      // 잘못된 어순은 "failed to parse logic tree" 400 → exclude 필터 전체가 깨짐 (라이브 검증으로 확인).
+      q = q.or(`risk_flags.is.null,risk_flags.not.ov.{${safe.join(",")}}`);
     }
   }
   return q;
@@ -129,10 +147,10 @@ export async function fetchProperties(
     case "fail_asc":
       q = q.order("fail_count", { ascending: true, nullsFirst: false }); break;
     case "discount_desc":
-      // 할인율 = min_sale_price / appraisal — DB에서 계산 어려워 min_sale_price 오름차순 대리
-      q = q.order("min_sale_price", { ascending: true, nullsFirst: false }); break;
+      // 할인율 높은 순 = 매각가율 낮은 순 (sale_rate_pct asc). 마이그레이션 0014.
+      q = q.order("sale_rate_pct", { ascending: true, nullsFirst: false }); break;
     case "discount_asc":
-      q = q.order("min_sale_price", { ascending: false, nullsFirst: false }); break;
+      q = q.order("sale_rate_pct", { ascending: false, nullsFirst: false }); break;
     case "sale_date":
     default:
       q = q.order("sale_date", { ascending: true, nullsFirst: false });
@@ -142,18 +160,9 @@ export async function fetchProperties(
 
   const { data, error, count } = await q;
   if (error) throw error;
-  let rows = (data ?? []) as unknown as Property[];
+  // 매각가율 필터는 이제 DB(sale_rate_pct)에서 적용 → count/페이지네이션 정확.
+  const rows = (data ?? []) as unknown as Property[];
 
-  // 매각가율 후처리 필터 (DB 인덱스 없는 비율 기반)
-  if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
-    const lo = filters.min_rate ?? 0;
-    const hi = filters.max_rate ?? 1000;
-    rows = rows.filter((r) => {
-      if (!r.appraisal_amount || !r.min_sale_price) return false;
-      const rate = (r.min_sale_price / r.appraisal_amount) * 100;
-      return rate >= lo && rate <= hi;
-    });
-  }
   return {
     rows,
     total: count ?? 0,
@@ -412,23 +421,14 @@ export async function fetchPropertiesForMap(
     if (rows.length < lim) break;
     offset += lim;
   }
-  // 한국 영토 박스 필터 + 매각가율 필터 (클라이언트).
+  // 한국 영토 박스 필터 (클라이언트). 매각가율은 applyFilters에서 DB 처리됨.
   // bbox가 명시되면 사용자 viewport이므로 한국 박스 재검사 불필요 (중복 비용).
-  let out = bbox
+  const out = bbox
     ? collected
     : collected.filter((r) =>
         r.longitude !== null && r.latitude !== null
         && r.longitude >= 124 && r.longitude <= 132.5
         && r.latitude  >= 33  && r.latitude  <= 39,
       );
-  if (filters.min_rate !== undefined || filters.max_rate !== undefined) {
-    const lo = filters.min_rate ?? 0;
-    const hi = filters.max_rate ?? 1000;
-    out = out.filter((r) => {
-      if (!r.appraisal_amount || !r.min_sale_price) return false;
-      const rate = (r.min_sale_price / r.appraisal_amount) * 100;
-      return rate >= lo && rate <= hi;
-    });
-  }
   return out;
 }
