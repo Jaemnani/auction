@@ -66,14 +66,19 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   else if (filters.addr_state === "no_road") q = q.is("road_addr", null);
 
   if (filters.q && filters.q.trim()) {
-    const kw = filters.q.trim();
-    const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
-    if (looksLikeCaseNo) {
-      q = q.ilike("cases.case_no", `%${kw}%`);
-    } else {
-      q = q.or(
-        `road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,lot_addr.ilike.%${kw}%`,
-      );
+    // PostgREST .or()/.ilike() 문자열에 raw 보간 → 메타문자 injection 위험.
+    //  ',' '(' ')' : 는 or 그룹/연산자 구분자, '%' '_' '\' 는 LIKE 와일드카드/이스케이프,
+    //  '*' 는 PostgREST ilike 와일드카드. 검색어에선 모두 리터럴 의미가 없으므로 공백 치환.
+    const kw = filters.q.trim().replace(/[,()%_\\:*]/g, " ").trim();
+    if (kw) {
+      const looksLikeCaseNo = /타경|^\d{4}/.test(kw);
+      if (looksLikeCaseNo) {
+        q = q.ilike("cases.case_no", `%${kw}%`);
+      } else {
+        q = q.or(
+          `road_addr.ilike.%${kw}%,conv_addr.ilike.%${kw}%,lot_addr.ilike.%${kw}%`,
+        );
+      }
     }
   }
 
