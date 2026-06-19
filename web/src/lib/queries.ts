@@ -195,6 +195,11 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
     csBaseInfo:detail_result->csBaseInfo,
     dspslGdsDxdyInfo:detail_result->dspslGdsDxdyInfo,
     aeeWevlMnpntLst:detail_result->aeeWevlMnpntLst,
+    rgltLandLstAll:detail_result->rgltLandLstAll,
+    bldSdtrDtlLstAll:detail_result->bldSdtrDtlLstAll,
+    gdsRletStLtnoLstAll:detail_result->gdsRletStLtnoLstAll,
+    dstrtDemnInfo:detail_result->dstrtDemnInfo,
+    gdsDspslObjctLst:detail_result->gdsDspslObjctLst,
     cases:case_id ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                     courts:court_code ( code, name ) ),
     property_sale_dates ( seq, sale_date, hour, place, min_price, result_cd, raw ),
@@ -217,6 +222,11 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
       csBaseInfo: row.csBaseInfo,
       dspslGdsDxdyInfo: row.dspslGdsDxdyInfo,
       aeeWevlMnpntLst: row.aeeWevlMnpntLst,
+      rgltLandLstAll: row.rgltLandLstAll,
+      bldSdtrDtlLstAll: row.bldSdtrDtlLstAll,
+      gdsRletStLtnoLstAll: row.gdsRletStLtnoLstAll,
+      dstrtDemnInfo: row.dstrtDemnInfo,
+      gdsDspslObjctLst: row.gdsDspslObjctLst,
     },
   };
 }
