@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import type { PropertyFilters } from "@/lib/types";
-import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED } from "@/lib/filter-flags";
+import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED, DISABLED_DERIVED } from "@/lib/filter-flags";
 
 type Option = { code: string; name: string };
 
@@ -448,11 +448,6 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
       <details className="pt-2 border-t" open={(f.derived?.length ?? 0) > 0}>
         <summary className="cursor-pointer text-sm font-medium select-none flex items-center gap-2">
           <span>✨ 파생 카테고리</span>
-          {!DERIVED_FILTER_ENABLED && (
-            <span className="text-xs rounded bg-muted text-muted-foreground px-1.5 py-0.5">
-              준비중
-            </span>
-          )}
           {DERIVED_FILTER_ENABLED && f.derived && f.derived.length > 0 && (
             <span className="text-xs rounded bg-emerald-100 text-emerald-700 px-1.5 py-0.5">
               {f.derived.length}개 선택
@@ -464,7 +459,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
         </summary>
         <div className="flex flex-wrap gap-1.5 mt-3">
           {DERIVED_OPTIONS.map((o) => {
-            const disabled = !DERIVED_FILTER_ENABLED;
+            const disabled = !DERIVED_FILTER_ENABLED || DISABLED_DERIVED.has(o.code);
             const active = !disabled && (f.derived?.includes(o.code) ?? false);
             return (
               <label

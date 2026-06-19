@@ -1,6 +1,6 @@
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
-import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED } from "./filter-flags";
+import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED, DISABLED_DERIVED } from "./filter-flags";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -91,7 +91,9 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   // 파생 카테고리 다중 — derived_category 와 overlap (한 카테고리라도 매칭이면 포함).
   // 현재 비활성(데이터 0건) — DERIVED_FILTER_ENABLED=false 동안 URL 주입돼도 무시.
   if (DERIVED_FILTER_ENABLED && filters.derived && filters.derived.length > 0) {
-    const safe = filters.derived.filter((c) => /^[a-z_]+$/.test(c));
+    const safe = filters.derived
+      .filter((c) => /^[a-z_]+$/.test(c))
+      .filter((c) => !DISABLED_DERIVED.has(c));
     if (safe.length > 0) {
       q = q.overlaps("derived_category", safe);
     }
