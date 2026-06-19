@@ -668,10 +668,17 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
 
     classifier = None
     if args.llm:
-        from llm import GeminiClassifier  # noqa: E402
-        classifier = GeminiClassifier()
-        print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
-              "— 룰 미분류 단독·다가구만 호출")
+        # LLM 초기화 실패(google-genai 미설치/GEMINI_API_KEY 누락/client 오류)는
+        # classify() try/except 바깥이라 cmd 전체를 죽임 → cron step exit 1.
+        # 보강은 부가기능이므로 실패 시 rule-only 로 graceful degrade.
+        try:
+            from llm import GeminiClassifier  # noqa: E402
+            classifier = GeminiClassifier()
+            print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
+                  "— 룰 미분류 단독·다가구만 호출")
+        except Exception as e:  # noqa: BLE001
+            classifier = None
+            print(f"[warn] LLM 보강 비활성화 (초기화 실패: {e}) — rule-only 진행")
 
     store = Store()
     run_id = store.start_run("backfill_categories",
