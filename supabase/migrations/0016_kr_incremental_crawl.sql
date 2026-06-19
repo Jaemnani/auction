@@ -48,3 +48,8 @@ alter table kr_valuation_history enable row level security;
 drop policy if exists "public read" on kr_valuation_history;
 create policy "public read" on kr_valuation_history
   for select to anon, authenticated using (true);
+
+-- ★ 새 컬럼/테이블을 PostgREST가 write 스키마에 반영하도록 캐시 리로드.
+--   (안 하면 last_seen_at write가 PGRST204 'column not in schema cache'로 실패 →
+--    증분 크롤이 깨짐. 컬럼 추가 시 반드시 필요.)
+notify pgrst, 'reload schema';
