@@ -256,11 +256,19 @@ class Store:
         self._incremental = self._probe_incremental()
 
     def _probe_incremental(self) -> bool:
+        """0016 컬럼 존재 + PostgREST 스키마캐시에 write 가능하게 반영됐는지 검증.
+        DDL 후 `NOTIFY pgrst, 'reload schema'` 안 하면 read는 되지만 write는 PGRST204 →
+        반드시 '쓰기'로 검증해야 함 (안 그러면 incremental 진입 후 liveness write에서 죽음).
+        매칭 0행 update(존재 불가 uuid)라 데이터 변경 없음."""
         try:
-            self.sb.table("properties").select("last_seen_at").limit(1).execute()
+            self.sb.table("properties").update(
+                {"last_seen_at": None}
+            ).eq("id", "00000000-0000-0000-0000-000000000000").execute()
             return True
         except Exception as e:  # noqa: BLE001
-            logger.warning("증분 컬럼 미감지 → 구버전 blind upsert 사용 (0016 미적용?): %s", e)
+            logger.warning(
+                "증분 컬럼 write 불가 → 구버전 blind upsert 폴백 "
+                "(0016 미적용 또는 스키마캐시 미reload: NAS에서 NOTIFY pgrst, 'reload schema'): %s", e)
             return False
 
     # ---------- masters ----------
