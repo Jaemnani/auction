@@ -4,6 +4,7 @@ import { fetchCodeNames, fetchProperty, fetchRegionStats, photoPublicUrl } from 
 
 // MolitDeals — 클라이언트 fetch 컴포넌트. 청크 분리로 초기 JS 페이로드 축소.
 const MolitDeals = nextDynamic(() => import("@/components/molit-deals").then((m) => ({ default: m.MolitDeals })));
+const BuildingRegister = nextDynamic(() => import("@/components/building-register").then((m) => ({ default: m.BuildingRegister })));
 import { fmtDate, fmtMoney, fmtDiscount, fmtPercent } from "@/lib/format";
 import {
   parseRiskFlags, parseDposRate, parsePrimaryLien,
@@ -245,6 +246,22 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 
       {/* 매각대상물 — gdsDspslObjctLst */}
       <DetailListCard title="매각대상물" items={dspslObj} />
+
+      {/* 건축물대장 (건축HUB) — 지번 기반 조회. 동 주소만 신뢰, 리는 부정확 가능 */}
+      {p.sd_code && p.sgg_code && p.emd_code && p.lot_no && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">건축물대장 (건축HUB)</CardTitle></CardHeader>
+          <CardContent>
+            <BuildingRegister
+              sdCode={p.sd_code}
+              sggCode={p.sgg_code}
+              emdCode={p.emd_code}
+              lotNo={p.lot_no}
+              isMountain={/\s산\s?\d/.test(p.lot_addr ?? "")}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* 원본 데이터 (raw) — sparse/민감 가능성 있는 건 펼치기 안에 */}
       {(Object.keys(csBase).length > 0 || Object.keys(dxdy).length > 0

@@ -181,7 +181,7 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
     appraisal_amount, min_sale_price, current_sale_price, fail_count,
     sale_date, sale_decision_date, status_cd,
     usage_lcl_cd, usage_mcl_cd, usage_scl_cd,
-    sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
+    sd_code, sgg_code, emd_code, lot_no, conv_addr, road_addr, lot_addr,
     building_summary, area_summary, longitude, latitude, detail_synced_at,
     rmk:detail_result->dspslGdsDxdyInfo->>dspslGdsRmk,
     spc_rmk:detail_result->dspslGdsDxdyInfo->>gdsSpcfcRmk,
