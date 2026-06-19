@@ -433,10 +433,17 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
 
     classifier = None
     if args.llm:
-        from llm import GeminiJpClassifier  # noqa: E402
-        classifier = GeminiJpClassifier()
-        print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
-              "— 룰 미분류 戸建て만 호출")
+        # LLM 초기화 실패(google-genai 미설치/GEMINI_API_KEY 누락/client 오류)는
+        # classify() try/except 바깥이라 cmd 전체를 죽임 → step exit 1.
+        # 보강은 부가기능이므로 실패 시 rule-only 로 graceful degrade.
+        try:
+            from llm import GeminiJpClassifier  # noqa: E402
+            classifier = GeminiJpClassifier()
+            print("[+] LLM 보강 활성화 (Gemini 2.5 Flash Lite) "
+                  "— 룰 미분류 戸建て만 호출")
+        except Exception as e:  # noqa: BLE001
+            classifier = None
+            print(f"[warn] LLM 보강 비활성화 (초기화 실패: {e}) — rule-only 진행")
 
     store = BitStore()
 
@@ -475,34 +482,39 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
         for r in rows:
             n_seen += 1
             last_id = r["sale_unit_id"]
-            cats = derive_categories(r)
-            via_llm = False
+            try:
+                cats = derive_categories(r)
+                via_llm = False
 
-            # 룰 미분류 + 戸建て + LLM 활성 → Gemini 호출
-            if (not cats and classifier is not None
-                    and str(r.get("sale_cls") or "") == "2"):
-                pref_name = pref_name_by_code.get(
-                    r.get("prefecture_code") or "", ""
-                )
-                llm_out = await asyncio.to_thread(
-                    classifier.classify, r, pref_name=pref_name,
-                )
-                n_llm_called += 1
-                cats = llm_out.get("categories") or []
-                if cats:
-                    via_llm = True
-                    n_llm_updated += 1
+                # 룰 미분류 + 戸建て + LLM 활성 → Gemini 호출
+                if (not cats and classifier is not None
+                        and str(r.get("sale_cls") or "") == "2"):
+                    pref_name = pref_name_by_code.get(
+                        r.get("prefecture_code") or "", ""
+                    )
+                    llm_out = await asyncio.to_thread(
+                        classifier.classify, r, pref_name=pref_name,
+                    )
+                    n_llm_called += 1
+                    cats = llm_out.get("categories") or []
+                    if cats:
+                        via_llm = True
+                        n_llm_updated += 1
 
-            prev = r.get("derived_category") or []
-            if sorted(prev) == sorted(cats):
+                prev = r.get("derived_category") or []
+                if sorted(prev) == sorted(cats):
+                    continue
+
+                store.sb.table("jp_properties").update(
+                    {"derived_category": cats}
+                ).eq("sale_unit_id", r["sale_unit_id"]).execute()
+
+                if not via_llm and cats:
+                    n_rule_updated += 1
+            except Exception as e:  # noqa: BLE001
+                # 한 row 실패가 전체 step(exit 1)을 죽이지 않도록 격리.
+                print(f"[warn] row {r.get('sale_unit_id')} 분류 실패: {e}")
                 continue
-
-            store.sb.table("jp_properties").update(
-                {"derived_category": cats}
-            ).eq("sale_unit_id", r["sale_unit_id"]).execute()
-
-            if not via_llm and cats:
-                n_rule_updated += 1
             done = n_rule_updated + n_llm_updated
             if done > 0 and done % 50 == 0:
                 print(f"  ... rule={n_rule_updated} llm={n_llm_updated} "
