@@ -4,6 +4,7 @@ import { fetchCodeNames, fetchProperty, fetchRegionStats, photoPublicUrl } from 
 
 // MolitDeals — 클라이언트 fetch 컴포넌트. 청크 분리로 초기 JS 페이로드 축소.
 const MolitDeals = nextDynamic(() => import("@/components/molit-deals").then((m) => ({ default: m.MolitDeals })));
+const BuildingRegister = nextDynamic(() => import("@/components/building-register").then((m) => ({ default: m.BuildingRegister })));
 import { fmtDate, fmtMoney, fmtDiscount, fmtPercent } from "@/lib/format";
 import {
   parseRiskFlags, parseDposRate, parsePrimaryLien,
@@ -35,6 +36,12 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
   const csBase = (detail.csBaseInfo ?? {}) as Record<string, unknown>;
   const dxdy = (detail.dspslGdsDxdyInfo ?? {}) as Record<string, unknown>;
   const aeeWevl = (detail.aeeWevlMnpntLst ?? []) as Array<Record<string, unknown>>;
+  // slim_detail이 보존하지만 이전엔 미노출이던 상세 목록 (queries.ts DETAIL_SELECT).
+  const tenants = (detail.gdsRletStLtnoLstAll ?? []) as Array<Record<string, unknown>>;
+  const regLand = (detail.rgltLandLstAll ?? []) as Array<Record<string, unknown>>;
+  const dspslObj = (detail.gdsDspslObjctLst ?? []) as Array<Record<string, unknown>>;
+  const bldDtl = (detail.bldSdtrDtlLstAll ?? []) as Array<Record<string, unknown>>;
+  const dstrtDemn = (detail.dstrtDemnInfo ?? {}) as Record<string, unknown>;
 
   // 코드 이름 매핑.
   // sgg는 sd+code 페어로 정확히 lookup (단순 code 매칭 시 동명 코드 충돌:
@@ -231,8 +238,34 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </Card>
       )}
 
-      {/* 원본 데이터 (raw) */}
-      {(Object.keys(csBase).length > 0 || Object.keys(dxdy).length > 0) && (
+      {/* 임차인현황 — gdsRletStLtnoLstAll (보증금/대항력 필드는 sparse) */}
+      <DetailListCard title="임차인현황" items={tenants} />
+
+      {/* 등기부·토지 권리 — rgltLandLstAll */}
+      <DetailListCard title="등기부 / 토지 권리" items={regLand} />
+
+      {/* 매각대상물 — gdsDspslObjctLst */}
+      <DetailListCard title="매각대상물" items={dspslObj} />
+
+      {/* 건축물대장 (건축HUB) — 지번 기반 조회. 동 주소만 신뢰, 리는 부정확 가능 */}
+      {p.sd_code && p.sgg_code && p.emd_code && p.lot_no && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">건축물대장 (건축HUB)</CardTitle></CardHeader>
+          <CardContent>
+            <BuildingRegister
+              sdCode={p.sd_code}
+              sggCode={p.sgg_code}
+              emdCode={p.emd_code}
+              lotNo={p.lot_no}
+              isMountain={/\s산\s?\d/.test(p.lot_addr ?? "")}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 원본 데이터 (raw) — sparse/민감 가능성 있는 건 펼치기 안에 */}
+      {(Object.keys(csBase).length > 0 || Object.keys(dxdy).length > 0
+        || bldDtl.length > 0 || Object.keys(dstrtDemn).length > 0) && (
         <details>
           <summary className="cursor-pointer text-sm text-muted-foreground py-2">
             원본 응답 키 펼치기
@@ -248,6 +281,20 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
               <Card>
                 <CardHeader><CardTitle className="text-sm">dspslGdsDxdyInfo</CardTitle></CardHeader>
                 <CardContent><RawKv obj={dxdy} /></CardContent>
+              </Card>
+            )}
+            {Object.keys(dstrtDemn).length > 0 && (
+              <Card>
+                <CardHeader><CardTitle className="text-sm">배당요구 (dstrtDemnInfo)</CardTitle></CardHeader>
+                <CardContent><RawKv obj={dstrtDemn} /></CardContent>
+              </Card>
+            )}
+            {bldDtl.length > 0 && (
+              <Card>
+                <CardHeader><CardTitle className="text-sm">건축물대장 상세 (bldSdtrDtlLstAll)</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {bldDtl.map((it, i) => <RawKv key={i} obj={it} />)}
+                </CardContent>
               </Card>
             )}
           </div>
@@ -512,6 +559,16 @@ function PropertyRiskCard({ p }: { p: Awaited<ReturnType<typeof fetchProperty>> 
           </div>
         )}
 
+        {/* 물건 특정 비고 (spc_rmk = gdsSpcfcRmk) — 위반건축물·제시외 등 핵심 고지 */}
+        {p.spc_rmk && String(p.spc_rmk).trim() && String(p.spc_rmk).trim() !== "-" && (
+          <div className="rounded-md border bg-amber-50/60 p-2.5">
+            <div className="text-xs text-muted-foreground mb-1">물건 특정 비고</div>
+            <div className="text-sm whitespace-pre-wrap break-words">
+              <AreaText>{String(p.spc_rmk).trim()}</AreaText>
+            </div>
+          </div>
+        )}
+
         {/* 공식 사이트 딥링크 */}
         {officialUrl && (
           <div className="flex items-center gap-3 pt-1 text-xs">
@@ -553,6 +610,48 @@ function KvGrid({ items }: { items: [string, React.ReactNode][] }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+// 상세 목록(등기부/임차인/매각대상물) 항목의 스칼라 필드 → 한글 라벨.
+// 알려진 키만 매핑, 나머지는 원본 키 노출 (필드명 불확실성에 안전).
+const DETAIL_FIELD_LABELS: Record<string, string> = {
+  // 임차인 (gdsRletStLtnoLstAll)
+  rletStLtnoAddr: "소재지", rdnmRefcAddr: "도로명주소", auctnLstDvsCd: "구분",
+  mclDspslGdsLstUsgCd: "용도",
+  // 등기부·토지 (rgltLandLstAll)
+  rgltLandLtnoAddr: "소재지", landArDts: "면적", auctnRgltKndCd: "권리종류",
+  rgltDvsDts: "구분",
+  // 매각대상물 (gdsDspslObjctLst)
+  pjbBuldList: "건물내역", objctArDts: "면적", bldNm: "건물명", ldcgDts: "지목",
+};
+
+function DetailListCard({ title, items }: {
+  title: string; items: Array<Record<string, unknown>>;
+}) {
+  if (!items || items.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {items.map((it, i) => {
+          const entries = Object.entries(it).filter(
+            ([, v]) => v !== null && v !== "" && typeof v !== "object",
+          );
+          if (entries.length === 0) return null;
+          return (
+            <dl key={i} className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 border-b pb-2 last:border-0">
+              {entries.map(([k, v]) => (
+                <div key={k} className="flex gap-2">
+                  <dt className="text-muted-foreground w-28 shrink-0">{DETAIL_FIELD_LABELS[k] ?? k}</dt>
+                  <dd className="break-words">{String(v)}</dd>
+                </div>
+              ))}
+            </dl>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

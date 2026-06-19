@@ -4,18 +4,18 @@ import { useEffect, useState } from "react";
 import { fmtMoney } from "@/lib/format";
 import { formatArea, useAreaUnit } from "@/lib/area-unit";
 
+// API route(/api/molit-deals)가 정규화해 내려주는 형태 — RTMSDataSvc 영문 필드를
+// 유형 무관 형태로 매핑한 결과. (route.ts normalizeDeal 참조)
 type Deal = {
-  거래금액?: string;
-  거래유형?: string;
-  법정동?: string;
-  아파트?: string;
-  단지명?: string;
-  연?: string | number;
-  월?: string | number;
-  일?: string | number;
-  전용면적?: string | number;
-  층?: string | number;
-  [k: string]: unknown;
+  name: string;
+  umd: string;
+  jibun: string;
+  year: string;
+  month: string;
+  day: string;
+  amountManwon: number | null;
+  area: number | null;
+  floor: string | null;
 };
 
 export type MolitType =
@@ -116,15 +116,18 @@ export function MolitDeals({ lawdCd, type = "apt" }: Props) {
             </thead>
             <tbody>
               {deals.map((d, i) => {
-                const won = parseInt(String(d.거래금액 ?? "").replace(/[\s,]/g, ""), 10);
-                const date = `${d.연}.${String(d.월).padStart(2, "0")}.${String(d.일).padStart(2, "0")}`;
+                const date = d.year
+                  ? `${d.year}.${String(d.month).padStart(2, "0")}.${String(d.day).padStart(2, "0")}`
+                  : "-";
                 return (
                   <tr key={i} className="border-b last:border-0">
-                    <td className="py-1">{String(d.아파트 ?? d.단지명 ?? d.법정동 ?? "")}</td>
+                    <td className="py-1">{d.name || d.umd || "-"}</td>
                     <td className="py-1">{date}</td>
-                    <td className="py-1 text-right font-mono">{won ? fmtMoney(won * 10000) : "-"}</td>
-                    <td className="py-1 text-right">{formatArea(d.전용면적, unit)}</td>
-                    <td className="py-1 text-right">{d.층 ?? "-"}</td>
+                    <td className="py-1 text-right font-mono">
+                      {d.amountManwon ? fmtMoney(d.amountManwon * 10000) : "-"}
+                    </td>
+                    <td className="py-1 text-right">{d.area != null ? formatArea(d.area, unit) : "-"}</td>
+                    <td className="py-1 text-right">{d.floor ?? "-"}</td>
                   </tr>
                 );
               })}

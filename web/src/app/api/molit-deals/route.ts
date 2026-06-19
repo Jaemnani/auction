@@ -49,11 +49,16 @@ export async function GET(req: Request) {
     );
   }
 
-  // ServiceKey는 이미 URL-encoded form이므로 raw concat (재인코딩하면 망가짐)
+  // 숫자 검증 — numOfRows는 외부 URL에 concat되므로 파라미터 오염 방지차 정수만.
+  const rows = Math.min(1000, Math.max(1, Number(numOfRows) || 50));
+
+  // ServiceKey는 이미 URL-encoded form이므로 raw concat (재인코딩하면 망가짐).
+  // _type=json — 신형 RTMSDataSvc 엔드포인트는 기본 XML, 이 파라미터로 JSON 강제.
   const target = `${endpoint}?serviceKey=${apiKey}`
-    + `&pageNo=1&numOfRows=${numOfRows}`
+    + `&pageNo=1&numOfRows=${rows}`
     + `&LAWD_CD=${encodeURIComponent(lawdCd)}`
-    + `&DEAL_YMD=${encodeURIComponent(dealYmd)}`;
+    + `&DEAL_YMD=${encodeURIComponent(dealYmd)}`
+    + `&_type=json`;
 
   try {
     const r = await fetch(target, {
@@ -67,14 +72,47 @@ export async function GET(req: Request) {
     }
     const body = await r.json();
     // OpenAPI 표준 응답: { response: { header, body: { items: { item: [...] } } } }
-    const items = body?.response?.body?.items?.item;
+    const raw = body?.response?.body?.items?.item;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    // 신형 RTMSDataSvc는 영문 필드명 + 유형별 차이 → 유형 무관 형태로 정규화.
+    const items = list.map(normalizeDeal);
     return NextResponse.json({
       total: body?.response?.body?.totalCount ?? 0,
-      items: Array.isArray(items) ? items : items ? [items] : [],
+      items,
     });
   } catch (e) {
     return NextResponse.json(
       { error: String(e) }, { status: 500 },
     );
   }
+}
+
+/** RTMSDataSvc 응답(영문 필드) → 유형 무관 정규화 형태.
+ *  유형별 차이를 폴백 체인으로 흡수:
+ *   이름:   aptNm(아파트) / offiNm(오피) / mhouseNm(연립) / houseType(단독) /
+ *           buildingType(상업·공장) / 없으면 법정동(umdNm)
+ *   면적:   excluUseAr(전용) / dealArea(토지) / totalFloorAr(단독 연면적) /
+ *           buildingAr(상업 건물) / landAr(연립 대지권)
+ */
+function normalizeDeal(d: Record<string, unknown>) {
+  const s = (v: unknown) => (v == null ? "" : String(v).trim());
+  const num = (v: unknown) => {
+    const n = parseFloat(s(v).replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    name: s(d.aptNm) || s(d.offiNm) || s(d.mhouseNm) || s(d.houseType)
+      || s(d.buildingType) || s(d.umdNm),
+    umd: s(d.umdNm),
+    jibun: s(d.jibun),
+    year: s(d.dealYear),
+    month: s(d.dealMonth),
+    day: s(d.dealDay),
+    // 거래금액(만원). 영문 dealAmount는 " 50,000" 형태 → 정수 만원.
+    amountManwon: num(d.dealAmount),
+    // 면적(㎡)
+    area: num(d.excluUseAr) ?? num(d.dealArea) ?? num(d.totalFloorAr)
+      ?? num(d.buildingAr) ?? num(d.landAr),
+    floor: s(d.floor) || null,
+  };
 }

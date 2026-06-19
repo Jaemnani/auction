@@ -36,6 +36,7 @@ export type Property = {
   sd_code: string | null;
   sgg_code: string | null;
   emd_code: string | null;
+  lot_no: string | null;
   conv_addr: string | null;
   road_addr: string | null;
   lot_addr: string | null;
