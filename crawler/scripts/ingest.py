@@ -226,8 +226,12 @@ async def cmd_search(args: argparse.Namespace) -> None:
                 if sd:
                     totals["by_sd"][sd] = sd_total
 
+        # 완주 마커 — max-pages로 절단되지 않았고 예외(IpBlocked 등) 없이 끝났을 때만 true.
+        # close-aged 안전가드가 이 값을 보고 부분 실행 시 오삭제를 방지.
+        totals["complete"] = args.max_pages is None
         store.finish_run(run_id, totals=totals)
     except Exception as e:
+        totals["complete"] = False
         store.finish_run(run_id, totals=totals, status="failed", error=str(e))
         raise
 
@@ -263,9 +267,13 @@ async def cmd_backfill(args: argparse.Namespace) -> None:
     q = (
         store.sb.table("properties")
         .select("id, maemul_ser, cases!inner(court_code, case_no)")
-        .is_("detail_synced_at", "null")
-        .limit(args.limit)
     )
+    if store._incremental:
+        # 미수집(detail_synced_at NULL) OR 재수집 요청(stale=재경매 등으로 detail 갱신 필요)
+        q = q.or_("detail_synced_at.is.null,detail_refresh_requested_at.not.is.null")
+    else:
+        q = q.is_("detail_synced_at", "null")
+    q = q.limit(args.limit)
     if args.court:
         q = q.eq("cases.court_code", args.court)
     res = q.execute()
@@ -630,19 +638,26 @@ async def cmd_close_aged(args: argparse.Namespace) -> None:
                              {"since": args.since, "dry_run": bool(args.dry_run)})
     started = time.monotonic()
 
+    # 안전가드 — 직전 search가 완주하지 않았으면(차단/예산소진/부분실행) 삭제 skip.
+    # 부분 search에선 살아있는 매물이 last_seen_at 갱신을 못 받아 전부 오삭제될 위험.
+    if not args.dry_run and not store.last_search_complete_since(args.since):
+        print(f"[skip] close-aged — 직전 search가 완주하지 않음 (since={args.since}) → 오삭제 방지")
+        store.finish_run(run_id, totals={"closed": 0, "skipped": "search_incomplete"})
+        return
+
+    col = "last_seen_at" if store._incremental else "last_synced_at"
     try:
         if args.dry_run:
             sel = (store.sb.table("properties")
                    .select("id", count="exact", head=True)
-                   .lt("last_synced_at", args.since)
+                   .lt(col, args.since)
                    .is_("deleted_at", "null")
                    .execute())
             n = sel.count or 0
-            print(f"[dry-run] {n} properties would be soft-deleted "
-                  f"(last_synced_at < {args.since})")
+            print(f"[dry-run] {n} properties would be soft-deleted ({col} < {args.since})")
         else:
             n = store.close_aged(args.since)
-            print(f"[done] soft-deleted {n} properties (last_synced_at < {args.since})")
+            print(f"[done] soft-deleted {n} properties ({col} < {args.since})")
 
         store.finish_run(run_id, totals={"closed": n})
         elapsed = time.monotonic() - started

@@ -192,6 +192,34 @@ def _guess_content_type(filename: Any) -> str:
     return "image/jpeg"
 
 
+# 증분 크롤 — 검색응답이 담는 변경 신호. 이 값들이 직전과 다르면 "변경됨".
+_SIGNAL_INT_FIELDS = (
+    "appraisal_amount", "min_sale_price", "current_sale_price", "fail_count",
+)
+_SIGNAL_DATE_FIELDS = ("sale_date", "sale_decision_date")
+_SIGNAL_STR_FIELDS = ("status_cd",)
+_SIGNAL_FIELDS = _SIGNAL_INT_FIELDS + _SIGNAL_DATE_FIELDS + _SIGNAL_STR_FIELDS
+# detail(detail_result/sale_dates/risk_flags)을 stale로 만드는 변경 — 재경매/상태전이.
+# 단순 reprice(current_sale_price)는 검색 컬럼만 갱신되면 충분하므로 제외.
+_DETAIL_STALE_TRIGGERS = {"fail_count", "sale_date", "sale_decision_date", "status_cd"}
+
+
+def _signals_changed(prev: dict, new: dict) -> set[str]:
+    """직전 행(prev)과 신규 페이로드(new)의 신호 필드 비교 → 변경된 필드명 집합.
+    양쪽 모두 _to_int/_to_date/_str로 정규화 후 비교(numeric vs str, date 표기 차 흡수)."""
+    changed: set[str] = set()
+    for k in _SIGNAL_INT_FIELDS:
+        if _to_int(prev.get(k)) != _to_int(new.get(k)):
+            changed.add(k)
+    for k in _SIGNAL_DATE_FIELDS:
+        if _to_date(prev.get(k)) != _to_date(new.get(k)):
+            changed.add(k)
+    for k in _SIGNAL_STR_FIELDS:
+        if _str(prev.get(k)) != _str(new.get(k)):
+            changed.add(k)
+    return changed
+
+
 # ---------- store ----------
 
 @dataclass
@@ -224,6 +252,16 @@ class Store:
             sys.path.insert(0, _src)
         from storage_backend import make_storage  # noqa: E402
         self._storage = make_storage(self.sb)
+        # 0016 마이그레이션(last_seen_at 등) 적용 여부 — 미적용이면 구버전 blind upsert 폴백.
+        self._incremental = self._probe_incremental()
+
+    def _probe_incremental(self) -> bool:
+        try:
+            self.sb.table("properties").select("last_seen_at").limit(1).execute()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("증분 컬럼 미감지 → 구버전 blind upsert 사용 (0016 미적용?): %s", e)
+            return False
 
     # ---------- masters ----------
 
@@ -549,15 +587,94 @@ class Store:
             prop_seen[(p["case_id"], p["maemul_ser"])] = p
         deduped = list(prop_seen.values())
 
-        # 작은 chunk (search_row jsonb 큼 + GIST/trgm 인덱스 갱신 비용)
-        # 25개씩 잘라서 timeout 회피 — 페이지(50) 기준 2 round-trip
+        now_iso = datetime.utcnow().isoformat()
+
+        # 구버전(0016 미적용) — 기존 blind upsert 유지.
+        if not self._incremental:
+            return self._blind_upsert_props(deduped)
+
+        # --- 증분: 기존행 1회 배치 read → diff → 미변경(liveness만)/변경·신규(full) 분기 ---
+        case_ids = list({p["case_id"] for p in deduped})
+        existing_map: dict[tuple[str, int], dict] = {}
+        try:
+            ex = (
+                self.sb.table("properties")
+                .select("id, case_id, maemul_ser, appraisal_amount, min_sale_price, "
+                        "current_sale_price, fail_count, sale_date, sale_decision_date, "
+                        "status_cd")
+                .in_("case_id", case_ids)
+                .execute()
+            )
+            for r in ex.data or []:
+                existing_map[(r["case_id"], r["maemul_ser"])] = r
+        except Exception as e:  # noqa: BLE001
+            logger.warning("기존행 배치 read 실패 → 전체 full upsert 폴백: %s", e)
+            return self._blind_upsert_props([{**p, "last_seen_at": now_iso} for p in deduped])
+
+        full_upserts: list[dict] = []
+        liveness_ids: list[str] = []
+        hist_rows: list[dict] = []
+        for p in deduped:
+            prev = existing_map.get((p["case_id"], p["maemul_ser"]))
+            if prev is None:
+                # 신규 — full upsert (detail은 detail_synced_at NULL 경로로 자동 수집)
+                full_upserts.append({**p, "last_seen_at": now_iso})
+                continue
+            changed = _signals_changed(prev, p)
+            if not changed:
+                liveness_ids.append(prev["id"])  # 변경 없음 → liveness만
+                continue
+            row = {**p, "last_seen_at": now_iso}
+            if changed & _DETAIL_STALE_TRIGGERS:  # 재경매/상태전이 → detail 재수집 표시
+                row["detail_refresh_requested_at"] = now_iso
+            full_upserts.append(row)
+            hist_rows.append({
+                "property_id": prev["id"],
+                "appraisal_amount": _to_int(p.get("appraisal_amount")),
+                "min_sale_price": _to_int(p.get("min_sale_price")),
+                "current_sale_price": _to_int(p.get("current_sale_price")),
+                "fail_count": _to_int(p.get("fail_count")),
+                "sale_date": _to_date(p.get("sale_date")),
+                "sale_decision_date": _to_date(p.get("sale_decision_date")),
+                "status_cd": _str(p.get("status_cd")),
+                "reason": "search re-scan detected change",
+                "raw": {
+                    "prev": {k: prev.get(k) for k in _SIGNAL_FIELDS},
+                    "new": {k: p.get(k) for k in _SIGNAL_FIELDS},
+                    "changed": sorted(changed),
+                },
+            })
+
+        if full_upserts:
+            self._blind_upsert_props(full_upserts)
+        # 미변경 행 — last_seen_at만 bulk update (jsonb/인덱스 갱신 비용 회피)
+        for chunk in _chunked(liveness_ids, 500):
+            self.sb.table("properties").update(
+                {"last_seen_at": now_iso}
+            ).in_("id", chunk).execute()
+        # 가격/진행 이력 — 실패해도 페이지는 계속 (부가기능)
+        if hist_rows:
+            try:
+                self.sb.table("kr_valuation_history").insert(hist_rows).execute()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("kr_valuation_history insert 실패(무시): %s", e)
+
+        logger.info(
+            "search page: full=%d liveness=%d changed=%d",
+            len(full_upserts), len(liveness_ids), len(hist_rows),
+        )
+        return len(deduped)
+
+    def _blind_upsert_props(self, rows: list[dict]) -> int:
+        """properties 일괄 upsert — 작은 chunk(25)로 timeout 회피.
+        (search_row jsonb 큼 + GIST/trgm 인덱스 갱신 비용 → 페이지 50 기준 2 round-trip.)"""
         PROP_CHUNK = 25
-        for chunk in _chunked(deduped, PROP_CHUNK):
+        for chunk in _chunked(rows, PROP_CHUNK):
             self.sb.table("properties").upsert(
                 chunk, on_conflict="case_id,maemul_ser",
                 returning="minimal",  # 응답에 row 데이터 포함하지 않음 → 빠름
             ).execute()
-        return len(deduped)
+        return len(rows)
 
     # 단건 호출은 호환용으로 유지
     def upsert_search_rows_loop(self, rows: list[dict]) -> int:
@@ -673,14 +790,16 @@ class Store:
             building_summary=p_data.get("building_summary"),
         )
 
-        self.sb.table("properties").update(
-            {
-                "detail_result": slim_detail,
-                "risk_flags": risk,
-                "detail_synced_at": datetime.utcnow().isoformat(),
-                "last_synced_at": datetime.utcnow().isoformat(),
-            }
-        ).eq("id", property_id).execute()
+        detail_update = {
+            "detail_result": slim_detail,
+            "risk_flags": risk,
+            "detail_synced_at": datetime.utcnow().isoformat(),
+            "last_synced_at": datetime.utcnow().isoformat(),
+        }
+        # detail 재수집 완료 → stale 플래그 클리어 (단일 진실원천). 0016 적용 시에만.
+        if self._incremental:
+            detail_update["detail_refresh_requested_at"] = None
+        self.sb.table("properties").update(detail_update).eq("id", property_id).execute()
 
         # 매각기일 이력
         sale_lst = dma_result.get("gdsDspslDxdyLst") or []
@@ -848,6 +967,9 @@ class Store:
         필터를 쓰므로 UI에서 자동 제외 (soft delete, 추후 복구·통계 가능).
         """
         from datetime import datetime, timezone
+        # 증분 모드: 미변경 행은 last_synced_at은 안 건드리고 last_seen_at만 갱신하므로
+        # liveness 판정은 last_seen_at으로 해야 함 (안 그러면 미변경 행이 전부 오삭제됨).
+        col = "last_seen_at" if self._incremental else "last_synced_at"
         # PostgREST 는 기본 1000행에서 잘림(PGRST_DB_MAX_ROWS) → range 로 전량 페이징.
         # (이전엔 단일 select 라 만료 매물이 1000건 넘으면 나머지가 영구히 soft-delete
         #  안 돼 낙찰·취하된 죽은 매물이 UI 에 계속 노출됐음)
@@ -858,7 +980,7 @@ class Store:
             sel = (
                 self.sb.table("properties")
                 .select("id")
-                .lt("last_synced_at", since_iso)
+                .lt(col, since_iso)
                 .is_("deleted_at", "null")
                 .order("id")
                 .range(offset, offset + PAGE - 1)
@@ -880,9 +1002,28 @@ class Store:
                 {"deleted_at": now_iso}
             ).in_("id", chunk).execute()
             n += len(chunk)
-        logger.info("soft-deleted %d aged properties (last_synced_at < %s)",
-                    n, since_iso)
+        logger.info("soft-deleted %d aged properties (%s < %s)",
+                    n, col, since_iso)
         return n
+
+    def last_search_complete_since(self, since_iso: str) -> bool:
+        """since_iso 이후 시작된 search run 중 완주(totals.complete=true)한 게 있나.
+        close-aged가 호출 전 확인 — 부분 실행(차단/예산소진)으로 인한 오삭제 방지."""
+        try:
+            r = (
+                self.sb.table("crawl_runs")
+                .select("id")
+                .eq("job_type", "search")
+                .eq("status", "done")
+                .eq("totals->>complete", "true")
+                .gte("started_at", since_iso)
+                .limit(1)
+                .execute()
+            )
+            return bool(r.data)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("search 완주 확인 실패(보수적으로 미완주 처리): %s", e)
+            return False
 
     # ---------- crawl runs / dead letters ----------
 
