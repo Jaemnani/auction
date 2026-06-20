@@ -19,6 +19,11 @@
 #   SALES_DAYS=7          매각결과 조회 기간 (오늘 기준 N일 전까지)
 #   REVERSE_GEOCODE_LIMIT=2000  Kakao 역지오코딩 1회 처리량 (KAKAO_REST_API_KEY 필요)
 #   PYTHON=/path/...      (기본: 공용 venv)
+#   --- IP 차단 완화 노브 (courtauction 검색/detail) ---
+#   CRAWL_CONCURRENCY=2       동시 요청 수 (↑하면 차단 위험↑)
+#   CRAWL_MIN_INTERVAL_MS=700 요청 최소 간격(ms). 차단 잦으면 1000~1500로 ↑
+#   CRAWL_JITTER_MS=600       간격에 더할 랜덤 지터(ms) — 봇 패턴 회피
+#   CRAWL_WARMUP=1            세션 워밍업(index GET으로 쿠키 시드). 0=비활성
 #
 # 모든 stdout/stderr → crawler/data/logs/daily_<timestamp>.log
 
