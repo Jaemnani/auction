@@ -104,6 +104,7 @@ class ClientConfig:
     min_interval_ms: int = 700          # 요청 최소 간격 (200ms도 차단 유발)
     jitter_ms: int = 600                # 간격에 더할 랜덤 지터 0~jitter (봇 패턴 회피)
     warmup: bool = True                 # 세션 시작 시 index GET으로 쿠키 시드
+    proxy: str | None = None            # 출구 IP 우회 — http(s)://... (socks5는 socksio 필요)
     timeout_s: float = 30.0
     max_retries: int = 5
     backoff_base_s: float = 0.5
@@ -146,11 +147,19 @@ class CourtAuctionClient:
         headers = dict(DEFAULT_HEADERS)
         if self.cfg.extra_headers:
             headers.update(self.cfg.extra_headers)
+        if self.cfg.proxy:
+            # 자격증명 노출 방지차 host만 로그.
+            try:
+                host = httpx.URL(self.cfg.proxy).host
+            except Exception:
+                host = "?"
+            logger.info("courtauction 요청을 프록시 경유: %s", host)
         self._client = httpx.AsyncClient(
             base_url=self.cfg.base_url,
             headers=headers,
             timeout=self.cfg.timeout_s,
             http2=False,
+            proxy=self.cfg.proxy,  # None이면 직결
         )
         if self.cfg.warmup:
             await self._warmup()

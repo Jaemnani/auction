@@ -24,6 +24,9 @@
 #   CRAWL_MIN_INTERVAL_MS=700 요청 최소 간격(ms). 차단 잦으면 1000~1500로 ↑
 #   CRAWL_JITTER_MS=600       간격에 더할 랜덤 지터(ms) — 봇 패턴 회피
 #   CRAWL_WARMUP=1            세션 워밍업(index GET으로 쿠키 시드). 0=비활성
+#   CRAWL_PROXY=http://user:pass@host:port  courtauction 요청 출구 IP 우회
+#                            (search 엔드포인트 IP차단=ipcheck 회피). socks5는 socksio 설치 필요.
+#                            Supabase/MinIO(LAN)는 영향 없음 — courtauction 호출만 경유.
 #
 # 모든 stdout/stderr → crawler/data/logs/daily_<timestamp>.log
 
