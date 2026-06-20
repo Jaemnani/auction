@@ -76,6 +76,7 @@ def _make_client(*, save_raw: bool) -> CourtAuctionClient:
         min_interval_ms=_env_int("CRAWL_MIN_INTERVAL_MS", 700),
         jitter_ms=_env_int("CRAWL_JITTER_MS", 600),
         warmup=(os.environ.get("CRAWL_WARMUP", "1") not in ("0", "false", "no")),
+        proxy=(os.environ.get("CRAWL_PROXY") or None),  # 출구 IP 우회 (search 차단 회피)
     ))
 
 
