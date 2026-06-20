@@ -60,10 +60,22 @@ RAW_DIR = DATA_DIR / "raw"
 DEAD_LETTER = DATA_DIR / "dead_letter.jsonl"
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
 def _make_client(*, save_raw: bool) -> CourtAuctionClient:
+    # IP 차단 완화 노브 — run_daily.sh 에서 env로 조절 (코드 변경 없이 튜닝).
     return CourtAuctionClient(ClientConfig(
         save_dir=RAW_DIR if save_raw else None,
         dead_letter_path=DEAD_LETTER,
+        concurrency=_env_int("CRAWL_CONCURRENCY", 2),
+        min_interval_ms=_env_int("CRAWL_MIN_INTERVAL_MS", 700),
+        jitter_ms=_env_int("CRAWL_JITTER_MS", 600),
+        warmup=(os.environ.get("CRAWL_WARMUP", "1") not in ("0", "false", "no")),
     ))
 
 

@@ -3,8 +3,9 @@ courtauction.go.kr API 클라이언트.
 
 설계 메모:
 - 모든 endpoint가 동일한 envelope 패턴 (`{status, message, data, ...}`)
-- 인증·세션 불필요 → httpx async 만으로 충분
-- 봇 차단·캡차 없음 — 매너 차원의 자체 rate limit / retry 만 적용
+- 세션 쿠키 기반 WAF 차단 있음 → __aenter__에서 index 페이지 GET으로 세션 워밍업
+  (쿠키 없는 요청은 "보안정책" 차단 유발). rate limit + 지터로 봇 패턴 회피.
+- 차단 감지 시 세션 재워밍 후 지수 backoff 재시도.
 - WebSquare submission 패턴 그대로 — `{"dma_xxx": {...}}` nested
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -62,13 +64,46 @@ class IpBlocked(CourtAuctionError):
     다음 실행(cron)에 재개하는 것이 정답 (보통 차단은 수십분~수시간 지속)."""
 
 
+# 차단/일시제한 메시지 키워드 — 두 형태 모두 backoff 대상으로 통일.
+#  · 200 envelope: message="...보안정책..." 또는 data.ipcheck=False
+#  · 400: errorMessage="...잠시 후 다시 이용...사용에 불편..."
+_BLOCK_KEYWORDS = ("보안정책", "차단", "잠시 후 다시", "사용에 불편", "일시적으로")
+
+
+def _block_message(body: Any) -> str | None:
+    """응답 body가 IP/세션 차단·일시제한이면 메시지 문자열, 아니면 None."""
+    if not isinstance(body, dict):
+        return None
+    data = body.get("data")
+    if isinstance(data, dict) and data.get("ipcheck") is False:
+        return "ipcheck=False"
+    parts: list[str] = []
+    for k in ("message", "errorMessage"):
+        v = body.get(k)
+        if isinstance(v, str):
+            parts.append(v)
+    err = body.get("errors")
+    if isinstance(err, dict):
+        v = err.get("errorMessage") or err.get("message")
+        if isinstance(v, str):
+            parts.append(v)
+    elif isinstance(err, str):
+        parts.append(err)
+    text = " ".join(parts)
+    if any(k in text for k in _BLOCK_KEYWORDS):
+        return text[:120]
+    return None
+
+
 # ---------- Config ----------
 
 @dataclass
 class ClientConfig:
     base_url: str = BASE_URL
     concurrency: int = 2                # 병렬 너무 많으면 IP 차단
-    min_interval_ms: int = 500          # 요청 간격 (200ms도 차단 유발)
+    min_interval_ms: int = 700          # 요청 최소 간격 (200ms도 차단 유발)
+    jitter_ms: int = 600                # 간격에 더할 랜덤 지터 0~jitter (봇 패턴 회피)
+    warmup: bool = True                 # 세션 시작 시 index GET으로 쿠키 시드
     timeout_s: float = 30.0
     max_retries: int = 5
     backoff_base_s: float = 0.5
@@ -117,7 +152,25 @@ class CourtAuctionClient:
             timeout=self.cfg.timeout_s,
             http2=False,
         )
+        if self.cfg.warmup:
+            await self._warmup()
         return self
+
+    async def _warmup(self) -> None:
+        """index 페이지 GET으로 세션 쿠키(JSESSIONID/WMONID 등) 시드.
+        courtauction WAF가 쿠키 없는 API 직접호출을 '보안정책' 차단할 수 있음 →
+        브라우저처럼 메인 페이지를 먼저 방문해 쿠키를 받아둔다. 실패해도 진행."""
+        if self._client is None:
+            return
+        try:
+            r = await self._client.get(
+                "/pgj/index.on?device=pc",
+                headers={"Accept": "text/html,application/xhtml+xml,*/*"},
+            )
+            logger.info("session warmup: GET index → %d, cookies=%d",
+                        r.status_code, len(self._client.cookies))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("session warmup 실패(무시): %s", e)
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if self._client is not None:
@@ -130,8 +183,10 @@ class CourtAuctionClient:
         if self.cfg.min_interval_ms <= 0:
             return
         async with self._throttle_lock:
+            # 고정 간격은 봇 패턴 → 매 요청 최소간격 + 0~jitter 랜덤을 목표로.
+            target_ms = self.cfg.min_interval_ms + random.uniform(0, self.cfg.jitter_ms)
             elapsed_ms = (time.monotonic() - self._last_request_at) * 1000
-            wait_ms = self.cfg.min_interval_ms - elapsed_ms
+            wait_ms = target_ms - elapsed_ms
             if wait_ms > 0:
                 await asyncio.sleep(wait_ms / 1000)
             self._last_request_at = time.monotonic()
@@ -212,6 +267,34 @@ class CourtAuctionClient:
                                   body=r.text[:500])
                 raise PermanentError(f"non-JSON response on {path}: {e}") from e
 
+            # IP/세션 차단·일시제한 감지 (400 '잠시 후 다시' + 200 '보안정책' + ipcheck=False
+            # 통합). 일반 retry 와 분리된 카운터 + 지수 backoff. 다 소진하면 IpBlocked 로
+            # 세션 종료 (수십분 차단은 다음 실행에서 재개하는 게 정답).
+            block_msg = _block_message(body)
+            if block_msg is not None:
+                ip_block_attempt += 1
+                if ip_block_attempt > self.cfg.ip_block_max_retries:
+                    raise IpBlocked(
+                        f"IP blocked on {path} — {self.cfg.ip_block_max_retries}회 "
+                        f"지수 backoff 후에도 미해소. 차단이 길어 세션 종료 "
+                        f"(다음 실행에서 재개). msg={block_msg[:80]}"
+                    )
+                delay = min(
+                    self.cfg.ip_block_pause_s * (2 ** (ip_block_attempt - 1)),
+                    self.cfg.ip_block_pause_max_s,
+                )
+                logger.warning(
+                    "IP/세션 차단 감지 %s (HTTP %d) — pausing %.0fs (ip-block %d/%d): msg=%s",
+                    path, r.status_code, delay, ip_block_attempt,
+                    self.cfg.ip_block_max_retries, block_msg[:80],
+                )
+                await asyncio.sleep(delay)
+                # 대기 후 세션 재워밍(새 쿠키) — 세션 단위 차단이면 갱신으로 풀릴 수 있음.
+                if self.cfg.warmup:
+                    await self._warmup()
+                last_err = IpBlocked(f"IP block on {path}")
+                continue  # attempt(network 카운터) 안 깎음
+
             if r.status_code >= 400:
                 err = body.get("errors") if isinstance(body, dict) else None
                 self._dead_letter(path, payload, status=r.status_code, body=body)
@@ -223,35 +306,6 @@ class CourtAuctionClient:
                 raise StructureChanged(f"envelope status != 200 on {path}")
 
             data = body.get("data")
-
-            # IP 차단 감지: 응답 message에 "보안정책" 포함 또는 data.ipcheck == False.
-            # 일반 retry 와 분리된 카운터 + 지수 backoff. 다 소진하면 IpBlocked 로
-            # 세션 종료 (90초 고정 5회로는 수십분 차단이 안 풀림 — 무의미한 대기 방지).
-            msg = body.get("message") or ""
-            ipchecked_ok = (
-                not isinstance(data, dict) or data.get("ipcheck") is not False
-            )
-            if "보안정책" in msg or "차단" in msg or not ipchecked_ok:
-                ip_block_attempt += 1
-                if ip_block_attempt > self.cfg.ip_block_max_retries:
-                    raise IpBlocked(
-                        f"IP blocked on {path} — {self.cfg.ip_block_max_retries}회 "
-                        f"지수 backoff 후에도 미해소. 차단이 길어 세션 종료 "
-                        f"(다음 실행에서 재개). msg={msg[:80]}"
-                    )
-                delay = min(
-                    self.cfg.ip_block_pause_s * (2 ** (ip_block_attempt - 1)),
-                    self.cfg.ip_block_pause_max_s,
-                )
-                logger.warning(
-                    "IP block detected on %s — pausing %.0fs "
-                    "(ip-block %d/%d): msg=%s",
-                    path, delay, ip_block_attempt,
-                    self.cfg.ip_block_max_retries, msg[:80],
-                )
-                await asyncio.sleep(delay)
-                last_err = IpBlocked(f"IP block on {path}")
-                continue  # attempt(network 카운터) 안 깎음
 
             if expect_keys and isinstance(data, dict):
                 missing = [k for k in expect_keys if k not in data]
