@@ -393,7 +393,9 @@ class BitStore:
                 self.sb.table("jp_properties")
                 .select("id")
                 .lt("fetched_at", since_iso)
-                .not_.in_("status", ["closed", "aborted"])
+                # status IS NULL 도 대상 — SQL의 NOT IN은 NULL을 제외(NULL→미종결로
+                # 오분류)하므로 명시 OR. (_classify_status가 상당수 NULL 반환.)
+                .or_("status.is.null,status.not.in.(closed,aborted)")
                 .order("id")
                 .range(offset, offset + PAGE - 1)
                 .execute()
