@@ -655,8 +655,10 @@ class Store:
 
         if full_upserts:
             self._blind_upsert_props(full_upserts)
-        # 미변경 행 — last_seen_at만 bulk update (jsonb/인덱스 갱신 비용 회피)
-        for chunk in _chunked(liveness_ids, 500):
+        # 미변경 행 — last_seen_at만 bulk update (jsonb/인덱스 갱신 비용 회피).
+        # chunk 150 — uuid .in_() URL 길이 제한 (close_aged 414 실측 참조).
+        # 페이지당 최대 50개뿐이라 실질 위험은 없지만 일관성/향후 안전차 동일 임계값.
+        for chunk in _chunked(liveness_ids, 150):
             self.sb.table("properties").update(
                 {"last_seen_at": now_iso}
             ).in_("id", chunk).execute()
@@ -1002,10 +1004,13 @@ class Store:
         if not ids:
             return 0
         now_iso = datetime.now(timezone.utc).isoformat()
-        # 1000건씩 chunk update (PostgREST in_ 길이 제한 회피)
+        # id가 uuid(36자)라 1000건씩 묶으면 URL 쿼리스트링이 ~37KB → NAS 앞단
+        # nginx(DSM 역방향 프록시) 기본 헤더 크기 제한에 걸려 414 Request-URI Too Large.
+        # (실측: 22422건 삭제 시도에서 발견. 150건 ≈ 5.5KB로 여유있게 안전.)
+        CHUNK = 150
         n = 0
-        for i in range(0, len(ids), 1000):
-            chunk = ids[i:i + 1000]
+        for i in range(0, len(ids), CHUNK):
+            chunk = ids[i:i + CHUNK]
             self.sb.table("properties").update(
                 {"deleted_at": now_iso}
             ).in_("id", chunk).execute()
