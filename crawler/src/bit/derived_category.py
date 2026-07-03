@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-# 휴양·도서 prefecture
-VACATION_PREFS: set[str] = {"01", "47"}  # 北海道, 沖縄
+# 휴양·도서 prefecture — 北海道는 ingester가 91~94로 저장(jp_ingest 매핑), "01" 아님.
+VACATION_PREFS: set[str] = {"91", "92", "93", "94", "47"}  # 北海道(91~94), 沖縄(47)
 
 # 키워드 (address_text / detail_result 텍스트에서 검색)
 VACATION_KW: tuple[str, ...] = ("別荘", "山荘", "リゾート", "別邸", "リゾ")

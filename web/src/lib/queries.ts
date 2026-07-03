@@ -18,6 +18,15 @@ const LIST_PROPERTY_SELECT = `
 
 const PROPERTY_SELECT = LIST_PROPERTY_SELECT;
 
+// 지도 마커용 — 팝업이 쓰는 필드만 (photos/courts 조인 없음).
+// 실측: 1000행 full select+photos = 2.7s/2MB → 최소 select = 0.9s/0.25MB.
+const MAP_PROPERTY_SELECT = `
+  id, docid, maemul_ser, appraisal_amount, min_sale_price, fail_count,
+  sale_date, usage_lcl_cd, conv_addr, road_addr, lot_addr, building_summary,
+  longitude, latitude,
+  cases:case_id!inner ( case_no )
+`;
+
 export type PropertyListResult = {
   rows: Property[];
   total: number;
@@ -129,7 +138,10 @@ export async function fetchProperties(
   let q: FilterableQuery = supabase
     .from("properties")
     .select(LIST_PROPERTY_SELECT, { count: "exact" })
-    .is("deleted_at", null);
+    .is("deleted_at", null)
+    // 썸네일은 최소 seq 1장만 필요 — 임베드 photos를 1건으로 제한 (전체 조인 방지).
+    .order("seq", { referencedTable: "property_photos", ascending: true })
+    .limit(1, { referencedTable: "property_photos" });
   q = applyFilters(q, filters);
 
   // 정렬 — 사용자가 컬럼별 오름/내림 선택. discount는 min_sale_price 대리(낮을수록 할인 큼).
@@ -409,7 +421,7 @@ export async function fetchPropertiesForMap(
 ): Promise<Property[]> {
   let q: FilterableQuery = supabase
     .from("properties")
-    .select(LIST_PROPERTY_SELECT)
+    .select(MAP_PROPERTY_SELECT)
     .is("deleted_at", null)
     .not("longitude", "is", null)
     .not("latitude", "is", null);
