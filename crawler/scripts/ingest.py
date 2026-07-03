@@ -73,10 +73,12 @@ def _make_client(*, save_raw: bool) -> CourtAuctionClient:
         save_dir=RAW_DIR if save_raw else None,
         dead_letter_path=DEAD_LETTER,
         concurrency=_env_int("CRAWL_CONCURRENCY", 2),
-        min_interval_ms=_env_int("CRAWL_MIN_INTERVAL_MS", 700),
-        jitter_ms=_env_int("CRAWL_JITTER_MS", 600),
+        min_interval_ms=_env_int("CRAWL_MIN_INTERVAL_MS", 1500),
+        jitter_ms=_env_int("CRAWL_JITTER_MS", 1000),
         warmup=(os.environ.get("CRAWL_WARMUP", "1") not in ("0", "false", "no")),
         proxy=(os.environ.get("CRAWL_PROXY") or None),  # 출구 IP 우회 (search 차단 회피)
+        checkpoint_every=_env_int("CRAWL_CHECKPOINT_EVERY", 80),
+        checkpoint_pause_s=_env_int("CRAWL_CHECKPOINT_PAUSE_S", 20),
     ))
 
 

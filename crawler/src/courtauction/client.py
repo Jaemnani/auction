@@ -101,10 +101,18 @@ def _block_message(body: Any) -> str | None:
 class ClientConfig:
     base_url: str = BASE_URL
     concurrency: int = 2                # 병렬 너무 많으면 IP 차단
-    min_interval_ms: int = 700          # 요청 최소 간격 (200ms도 차단 유발)
-    jitter_ms: int = 600                # 간격에 더할 랜덤 지터 0~jitter (봇 패턴 회피)
+    min_interval_ms: int = 1500         # 요청 최소 간격 (200ms도 차단 유발)
+    jitter_ms: int = 1000               # 간격에 더할 랜덤 지터 0~jitter (봇 패턴 회피)
     warmup: bool = True                 # 세션 시작 시 index GET으로 쿠키 시드
     proxy: str | None = None            # 출구 IP 우회 — http(s)://... (socks5는 socksio 필요)
+    # 실측(2026-06-27~07-02, 6회): 요청 간격은 설정대로(~1s) 정확히 지켜지는데도
+    # 152~481 요청(3배 편차)에서 차단 → 고정 카운트가 아니라 슬라이딩 윈도우형
+    # rate-limit 추정. 그래서 (a) 기본 간격을 늦추고 (b) 요청 다발을 끊어주는
+    # 주기적 쿨다운 (c) 차단 감지 시 이후 요청을 더 늦추는 적응형 감속을 추가.
+    checkpoint_every: int = 80          # 이 요청 수마다 추가 쿨다운 (다발 끊기)
+    checkpoint_pause_s: float = 20.0    # 체크포인트 쿨다운 길이
+    slowdown_on_block: float = 1.6      # 차단 감지 시 이후 간격에 곱할 배율 (누적, cap 있음)
+    slowdown_cap: float = 4.0           # 감속 배율 상한
     timeout_s: float = 30.0
     max_retries: int = 5
     backoff_base_s: float = 0.5
@@ -137,6 +145,8 @@ class CourtAuctionClient:
         self._throttle_lock = asyncio.Lock()
         self._last_request_at = 0.0
         self._client: httpx.AsyncClient | None = None
+        self._request_count = 0     # 체크포인트 쿨다운 판단용
+        self._slowdown = 1.0        # 차단 감지 시 누적 증가 — 세션 남은 기간 더 느리게
 
         if self.cfg.save_dir:
             self.cfg.save_dir.mkdir(parents=True, exist_ok=True)
@@ -189,16 +199,27 @@ class CourtAuctionClient:
     # ---------- internals ----------
 
     async def _throttle(self) -> None:
-        if self.cfg.min_interval_ms <= 0:
-            return
-        async with self._throttle_lock:
-            # 고정 간격은 봇 패턴 → 매 요청 최소간격 + 0~jitter 랜덤을 목표로.
-            target_ms = self.cfg.min_interval_ms + random.uniform(0, self.cfg.jitter_ms)
-            elapsed_ms = (time.monotonic() - self._last_request_at) * 1000
-            wait_ms = target_ms - elapsed_ms
-            if wait_ms > 0:
-                await asyncio.sleep(wait_ms / 1000)
-            self._last_request_at = time.monotonic()
+        if self.cfg.min_interval_ms > 0:
+            async with self._throttle_lock:
+                # 고정 간격은 봇 패턴 → 매 요청 최소간격 + 0~jitter 랜덤을 목표로.
+                # _slowdown: 차단 감지 시 누적 증가하는 배율 (세션 남은 기간 더 느리게).
+                target_ms = (
+                    (self.cfg.min_interval_ms + random.uniform(0, self.cfg.jitter_ms))
+                    * self._slowdown
+                )
+                elapsed_ms = (time.monotonic() - self._last_request_at) * 1000
+                wait_ms = target_ms - elapsed_ms
+                if wait_ms > 0:
+                    await asyncio.sleep(wait_ms / 1000)
+                self._last_request_at = time.monotonic()
+
+        # 체크포인트 쿨다운 — 요청 다발을 끊어 슬라이딩 윈도우형 rate-limit 회피.
+        self._request_count += 1
+        if (self.cfg.checkpoint_every > 0
+                and self._request_count % self.cfg.checkpoint_every == 0):
+            logger.info("checkpoint cooldown: %d requests → pausing %.0fs",
+                        self._request_count, self.cfg.checkpoint_pause_s)
+            await asyncio.sleep(self.cfg.checkpoint_pause_s)
 
     def _save_raw(self, path: str, payload: dict, body: Any) -> None:
         if not self.cfg.save_dir:
@@ -282,6 +303,12 @@ class CourtAuctionClient:
             block_msg = _block_message(body)
             if block_msg is not None:
                 ip_block_attempt += 1
+                prev_slowdown = self._slowdown
+                self._slowdown = min(
+                    self._slowdown * self.cfg.slowdown_on_block, self.cfg.slowdown_cap
+                )
+                if self._slowdown != prev_slowdown:
+                    logger.info("적응형 감속: 이후 요청 간격 x%.2f (누적)", self._slowdown)
                 if ip_block_attempt > self.cfg.ip_block_max_retries:
                     raise IpBlocked(
                         f"IP blocked on {path} — {self.cfg.ip_block_max_retries}회 "

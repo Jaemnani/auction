@@ -20,9 +20,14 @@
 #   REVERSE_GEOCODE_LIMIT=2000  Kakao 역지오코딩 1회 처리량 (KAKAO_REST_API_KEY 필요)
 #   PYTHON=/path/...      (기본: 공용 venv)
 #   --- IP 차단 완화 노브 (courtauction 검색/detail) ---
+#   실측(2026-06-27~07-02): 요청 간격은 설정대로 정확히 지켜지는데도 150~480 요청
+#   (편차 3배)에서 차단 → 고정 카운트가 아니라 슬라이딩 윈도우형 rate-limit 추정.
+#   기본값을 늦추고 주기적 쿨다운 + 차단 시 적응형 감속을 추가함(client.py).
 #   CRAWL_CONCURRENCY=2       동시 요청 수 (↑하면 차단 위험↑)
-#   CRAWL_MIN_INTERVAL_MS=700 요청 최소 간격(ms). 차단 잦으면 1000~1500로 ↑
-#   CRAWL_JITTER_MS=600       간격에 더할 랜덤 지터(ms) — 봇 패턴 회피
+#   CRAWL_MIN_INTERVAL_MS=1500 요청 최소 간격(ms). 차단 잦으면 2000~3000로 ↑
+#   CRAWL_JITTER_MS=1000      간격에 더할 랜덤 지터(ms) — 봇 패턴 회피
+#   CRAWL_CHECKPOINT_EVERY=80    이 요청 수마다 추가 쿨다운(다발 끊기). 0=비활성
+#   CRAWL_CHECKPOINT_PAUSE_S=20  체크포인트 쿨다운 길이(초)
 #   CRAWL_WARMUP=1            세션 워밍업(index GET으로 쿠키 시드). 0=비활성
 #   CRAWL_PROXY=http://user:pass@host:port  courtauction 요청 출구 IP 우회
 #                            (search 엔드포인트 IP차단=ipcheck 회피). socks5는 socksio 설치 필요.
