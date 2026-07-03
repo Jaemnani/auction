@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import type { Property, PropertyDetail, PropertyFilters } from "./types";
 import { DISABLED_RISK_FLAGS, DERIVED_FILTER_ENABLED, DISABLED_DERIVED } from "./filter-flags";
@@ -257,11 +258,14 @@ export async function fetchCodeNames(
   const out: Record<string, string> = {};
   if (filtered.length === 0 && sggPairs.length === 0) return out;
 
-  // sd / usage / courts — code unique이므로 단일 in() 매칭으로 안전
+  // sd / usage / courts — code unique이므로 단일 in() 매칭으로 안전.
+  // 서로 독립이므로 병렬 (기존엔 3개 순차 await → WAN 왕복 3배 지연).
   if (filtered.length > 0) {
-    const sdRes = await supabase.from("regions_sd").select("code, name").in("code", filtered);
-    const usageRes = await supabase.from("usage_codes").select("code, name").in("code", filtered);
-    const courtsRes = await supabase.from("courts").select("code, name").in("code", filtered);
+    const [sdRes, usageRes, courtsRes] = await Promise.all([
+      supabase.from("regions_sd").select("code, name").in("code", filtered),
+      supabase.from("usage_codes").select("code, name").in("code", filtered),
+      supabase.from("courts").select("code, name").in("code", filtered),
+    ]);
     for (const r of [...(sdRes.data ?? []), ...(usageRes.data ?? []), ...(courtsRes.data ?? [])]) {
       out[r.code] = r.name;
     }
@@ -372,44 +376,63 @@ export function photoThumbUrl(storagePath: string): string {
 }
 
 // ---------- 마스터 ----------
+// 법원/지역/용도 코드는 masters 크롤 때만 바뀜(거의 불변) → data cache로 감싸
+// force-dynamic 페이지에서도 매 요청 WAN 왕복을 없앰. 6시간 revalidate.
+const MASTER_TTL = 21600;
 
-export async function fetchCourts() {
-  const { data, error } = await supabase
-    .from("courts")
-    .select("code, prefix, name")
-    .eq("prefix", "B")
-    .order("name");
-  if (error) throw error;
-  return data ?? [];
-}
+export const fetchCourts = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from("courts")
+      .select("code, prefix, name")
+      .eq("prefix", "B")
+      .order("name");
+    if (error) throw error;
+    return data ?? [];
+  },
+  ["master:courts"],
+  { revalidate: MASTER_TTL },
+);
 
-export async function fetchSdList() {
-  const { data, error } = await supabase
-    .from("regions_sd")
-    .select("code, name")
-    .order("code");
-  if (error) throw error;
-  return data ?? [];
-}
+export const fetchSdList = unstable_cache(
+  async () => {
+    const { data, error } = await supabase
+      .from("regions_sd")
+      .select("code, name")
+      .order("code");
+    if (error) throw error;
+    return data ?? [];
+  },
+  ["master:sd"],
+  { revalidate: MASTER_TTL },
+);
 
-export async function fetchSggList(sdCode?: string) {
-  let q = supabase.from("regions_sgg").select("code, sd_code, name").order("name");
-  if (sdCode) q = q.eq("sd_code", sdCode);
-  const { data, error } = await q;
-  if (error) throw error;
-  return data ?? [];
-}
+export const fetchSggList = unstable_cache(
+  async (sdCode?: string) => {
+    let q = supabase.from("regions_sgg").select("code, sd_code, name").order("name");
+    if (sdCode) q = q.eq("sd_code", sdCode);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data ?? [];
+  },
+  ["master:sgg"],   // sdCode 인자는 unstable_cache가 캐시 키에 자동 포함
+  { revalidate: MASTER_TTL },
+);
 
-export async function fetchUsageList(level: 1 | 2 | 3, parentCode?: string) {
-  let q = supabase.from("usage_codes")
-    .select("code, level, parent_code, name")
-    .eq("level", level)
-    .order("code");
-  if (parentCode) q = q.eq("parent_code", parentCode);
-  const { data, error } = await q;
-  if (error) throw error;
-  return data ?? [];
-}
+export const fetchUsageList = unstable_cache(
+  async (level: 1 | 2 | 3, parentCode?: string) => {
+    let q = supabase.from("usage_codes")
+      .select("code, level, parent_code, name")
+      .eq("level", level)
+      .order("code");
+    if (parentCode) q = q.eq("parent_code", parentCode);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data ?? [];
+  },
+  ["master:usage"],  // level/parentCode 인자는 캐시 키에 자동 포함
+  { revalidate: MASTER_TTL },
+);
 
 // ---------- 지도용 좌표 ----------
 
