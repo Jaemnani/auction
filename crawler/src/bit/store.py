@@ -42,7 +42,8 @@ def _to_int(v: Any) -> int | None:
     if v in (None, "", "null"):
         return None
     try:
-        return int(v)
+        # 콤마 천단위 표기 허용 — KR courtauction/store.py의 _to_int와 동일 규약
+        return int(str(v).replace(",", "").strip())
     except (TypeError, ValueError):
         return None
 

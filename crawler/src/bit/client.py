@@ -95,22 +95,26 @@ DETAIL_RE = re.compile(
     r"""\s*["']?(?P<court_id>\d+)["']?\s*,\s*['"]?(?P<tab>\d+)['"]?\s*\)"""
 )
 
-# 가격 파싱: "4,940,000円" → 4940000
-PRICE_RE = re.compile(r"([\d,]+)\s*円")
+# 가격 파싱: "4,940,000円" → 4940000. 방어적으로 万円 표기도 지원:
+#   "494万円" → 4,940,000 / "494万5,000円" → 4,945,000
+#   (BIT 표준은 전액+콤마 표기지만, 표기 변경 시 조용히 NULL 되는 것 방지)
+PRICE_RE = re.compile(r"([\d,]+)(?:万([\d,]*))?\s*円")
 
-# 일본 날짜 파싱: 令和08年04月17日 → (era="令和", year=8, month=4, day=17)
+# 일본 날짜 파싱: 令和08年04月17日. 元年(1년차, 예: 令和元年) 표기도 지원.
 JP_DATE_RE = re.compile(
-    r"(令和|平成)(\d+)年(\d{1,2})月(\d{1,2})日"
+    r"(令和|平成)(\d+|元)年(\d{1,2})月(\d{1,2})日"
 )
 
 
 def _parse_jp_date(text: str) -> str | None:
-    """令和08年04月17日 → 2026-04-17 (ISO)."""
+    """令和08年04月17日 → 2026-04-17 (ISO). 令和元年=2019, 平成元年=1989."""
     m = JP_DATE_RE.search(text)
     if not m:
         return None
-    era, yy, mm, dd = m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))
-    base = 2018 if era == "令和" else 1988  # 令和元年=2019, 平成元年=1989
+    era = m.group(1)
+    yy = 1 if m.group(2) == "元" else int(m.group(2))
+    mm, dd = int(m.group(3)), int(m.group(4))
+    base = 2018 if era == "令和" else 1988
     year = base + yy
     return f"{year:04d}-{mm:02d}-{dd:02d}"
 
@@ -119,7 +123,11 @@ def _parse_price(text: str) -> int | None:
     m = PRICE_RE.search(text)
     if not m:
         return None
-    return int(m.group(1).replace(",", ""))
+    n = int(m.group(1).replace(",", ""))
+    if m.group(2) is not None:  # 万 표기 — 앞부분×10000 + 뒷부분(있으면)
+        rest = int(m.group(2).replace(",", "")) if m.group(2) else 0
+        return n * 10000 + rest
+    return n
 
 
 # ---------- Client ----------
@@ -646,22 +654,31 @@ def parse_detail(html: str) -> dict[str, Any]:
     }
     container = soup.select_one(".bit__syousai_text_kakaku_container")
     if container:
-        # 인접 (label, value) 페어를 위치로 매칭
-        ps = container.find_all("p")
-        for i, p in enumerate(ps):
-            label = p.get_text(strip=True)
-            if i + 1 >= len(ps):
-                break
-            val_text = ps[i + 1].get_text(strip=True)
-            price = _parse_price(val_text)
-            if price is None:
+        # 라벨 기반 페어링 — 단순 "다음 <p>=값" 위치 가정은 마크업에 다른 <p>가
+        # 끼면 엉뚱한 금액이 붙음(잘못된 값이 card 가격을 덮어쓰고 가짜
+        # valuation_history까지 생성). 라벨 뒤에서 '다음 라벨 전까지' 첫 가격을
+        # 값으로 취하고, 소비한 값은 재사용 금지.
+        PRICE_LABELS = {
+            "売却基準価額": "sale_standard_price",
+            "買受申出保証金": "bid_deposit",
+            "買受可能価額": "purchase_possible_price",
+        }
+        texts = [p.get_text(strip=True) for p in container.find_all("p")]
+        used: set[int] = set()
+        for i, label in enumerate(texts):
+            key = PRICE_LABELS.get(label)
+            if not key:
                 continue
-            if label == "売却基準価額":
-                prices["sale_standard_price"] = price
-            elif label == "買受申出保証金":
-                prices["bid_deposit"] = price
-            elif label == "買受可能価額":
-                prices["purchase_possible_price"] = price
+            for j in range(i + 1, len(texts)):
+                if texts[j] in PRICE_LABELS:
+                    break  # 다음 라벨 시작 — 이 라벨의 값 없음
+                if j in used:
+                    continue
+                price = _parse_price(texts[j])
+                if price is not None:
+                    prices[key] = price
+                    used.add(j)
+                    break
 
     # 매각기일 — multiHeadTable th-td 페어
     dates: dict[str, str | None] = {}
