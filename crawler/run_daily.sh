@@ -11,6 +11,8 @@
 #   PAGE_SIZE=50          검색 페이지 크기 (서버 상한)
 #   MAX_PAGES=10          검색 페이지 상한 (기본: 무제한)
 #   DETAIL_LIMIT=500      detail 백필 1회 처리량
+#   DETAIL_MAX_S=3600     detail 백필 step 시간 상한(초). 백로그가 TIME_BUDGET을
+#                         독식해 다운스트림(close-aged/주소/사진) 굶기는 것 방지
 #   PHOTO_LIMIT=1000      사진 적재 1회 처리량
 #   THUMB_LIMIT=1000      썸네일 생성 1회 처리량
 #   MAX_DRAIN_ITERS=20    drain 루프 최대 반복
@@ -83,6 +85,7 @@ COURT="${COURT:-}"
 PAGE_SIZE="${PAGE_SIZE:-50}"
 MAX_PAGES="${MAX_PAGES:-}"
 DETAIL_LIMIT="${DETAIL_LIMIT:-500}"
+DETAIL_MAX_S="${DETAIL_MAX_S:-3600}"   # detail 백필 step 상한(초). 백로그가 예산 독식 방지
 PHOTO_LIMIT="${PHOTO_LIMIT:-1000}"
 THUMB_LIMIT="${THUMB_LIMIT:-1000}"
 MAX_DRAIN_ITERS="${MAX_DRAIN_ITERS:-20}"
@@ -117,12 +120,21 @@ step() {
   fi
 }
 
-# drain 루프 — 출력에서 'ok N' 또는 'updated N' 가 0이거나 'requested 0'이면 종료
+# drain 루프 — 출력에서 'ok N' 또는 'updated N' 가 0이거나 'requested 0'이면 종료.
+# DRAIN_CAP_S(1회성)를 세팅하면 이 step에 그 초만큼만 쓰고 넘어감 → 큰 백로그(예:
+# detail 백필)가 TIME_BUDGET 전체를 먹어 다운스트림(close-aged/geocode 등)을
+# 굶기는 것 방지. 호출부에서 `DRAIN_CAP_S=3600 drain ...` 식으로 지정.
 drain() {
   local label="$1"; shift
+  local cap="${DRAIN_CAP_S:-0}"; DRAIN_CAP_S=0   # one-shot 소비
+  local dstart; dstart=$(date +%s)
   for i in $(seq 1 "$MAX_DRAIN_ITERS"); do
     if [ "$(budget_left)" -le 0 ]; then
       echo "[skip] '$label' iter=$i — TIME_BUDGET 소진"
+      return
+    fi
+    if [ "$cap" -gt 0 ] && [ "$(( $(date +%s) - dstart ))" -ge "$cap" ]; then
+      echo "[cap] '$label' iter=$i — step 예산 ${cap}s 소진, 다음 step으로 (백로그는 다음 실행 계속)"
       return
     fi
     echo ""
@@ -175,15 +187,23 @@ else
     ${MAX_PAGES:+--max-pages "$MAX_PAGES"}
 fi
 
-# 3) detail 백필 — 신규 분 모두 처리할 때까지 drain
-drain "backfill-details" crawler/scripts/ingest.py backfill-details \
+# 3) 종결 매물 soft delete — search 직후로 배치(값싼 DB-only, 필수).
+#    이전엔 맨 끝이라 detail 백필 백로그가 예산을 다 먹으면 매일 skip돼 죽은 매물이
+#    계속 노출됐음. search 완주 직후 실행해 항상 돌게 함.
+#    deleted_at 채움. list/map query 가 `.is_("deleted_at","null")` 필터라 자동 적용.
+#    내부 안전가드: 직전 search가 완주 못했으면 스스로 skip (오삭제 방지).
+step "close-aged" crawler/scripts/ingest.py close-aged --since "$RUN_SINCE_ISO"
+
+# 4) detail 백필 — 신규/재수집 분 drain. DETAIL_MAX_S 상한으로 다운스트림(주소/사진/
+#    카테고리) 예산 확보 (백로그는 다음 실행에 이어서 처리).
+DRAIN_CAP_S="$DETAIL_MAX_S" drain "backfill-details" crawler/scripts/ingest.py backfill-details \
   --limit "$DETAIL_LIMIT" ${COURT:+--court "$COURT"}
 
-# 4) 좌표/주소 후처리 (한 번이면 끝) — 주소는 UX 핵심이라 사진보다 먼저.
+# 5) 좌표/주소 후처리 (한 번이면 끝) — 주소는 UX 핵심이라 사진보다 먼저.
 step "backfill-coords" crawler/scripts/ingest.py backfill-coords
 step "backfill-addrs"  crawler/scripts/ingest.py backfill-addrs
 
-# 5) Kakao 역지오코딩 — 도로명 누락 매물 보강 (KAKAO_REST_API_KEY 필요).
+# 6) Kakao 역지오코딩 — 도로명 누락 매물 보강 (KAKAO_REST_API_KEY 필요).
 #    courtauction 검색은 도로명을 ~10%만 주므로 나머지는 좌표→주소로 채운다.
 #    courtauction을 안 건드려 IP 차단 위험이 없고 빠르다 → 사진 drain보다 앞에 둬서
 #    TIME_BUDGET 소진 전에 반드시 실행되게 한다 (이전엔 맨 뒤라 매번 skip됐음).
@@ -195,13 +215,13 @@ else
   echo "[skip] reverse-geocode — KAKAO_REST_API_KEY not set"
 fi
 
-# 6) 사진 base64 → Storage
+# 7) 사진 base64 → Storage
 drain "backfill-photos" crawler/scripts/ingest.py backfill-photos --limit "$PHOTO_LIMIT"
 
-# 6b) 썸네일 생성
+# 7b) 썸네일 생성
 drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUMB_LIMIT"
 
-# 7) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
+# 8) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
 # SALES_DAYS 환경변수로 조회 기간 조정 가능 (기본: 7일 = 어제~오늘 새 매각결과)
 SALES_DAYS="${SALES_DAYS:-7}"
 SALES_FROM="$(/bin/date -v-${SALES_DAYS}d +%Y%m%d 2>/dev/null || /bin/date -d "${SALES_DAYS} days ago" +%Y%m%d)"
@@ -209,19 +229,14 @@ SALES_TO="$(/bin/date +%Y%m%d)"
 step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
   --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
-# 8) 파생 카테고리 (전원주택/도심단독/농가/별장) — 신규 단독·다가구 매물 자동 분류.
+# 9) 파생 카테고리 (전원주택/도심단독/농가/별장) — 신규 단독·다가구 매물 자동 분류.
 #    GEMINI_API_KEY 있으면 룰 미분류 매물에 Gemini Flash Lite 보강 (매물당 ~$0.00004).
 if [ -n "${GEMINI_API_KEY:-}" ]; then
   step "backfill-categories (rule+LLM)" crawler/scripts/ingest.py backfill-categories --llm
 else
   step "backfill-categories (rule only)" crawler/scripts/ingest.py backfill-categories
 fi
-
-# 9) 종결 매물 soft delete — search에서 사라진 매물(낙찰/취하)을 UI에서 자동 제외.
-#    deleted_at 채움. list/map query 가 `.is_("deleted_at", "null")` 필터라 자동 적용.
-#    raw_responses/사진/detail_result 는 보존 (통계·복구 가능).
-#    내부 안전가드: 직전 search가 완주 못했으면 스스로 skip (오삭제 방지).
-step "close-aged" crawler/scripts/ingest.py close-aged --since "$RUN_SINCE_ISO"
+# (close-aged는 위 3)으로 이동 — detail 백필 백로그에 굶지 않도록 search 직후 실행)
 
 # --- 30일 이상 로그 정리 ---
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true
