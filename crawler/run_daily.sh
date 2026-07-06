@@ -105,7 +105,7 @@ step() {
   fi
   local rc=0
   echo ""
-  echo "==== $(date -Iseconds) [$label] (budget ${TIME_BUDGET_LEFT:-$(budget_left)}s left) ===="
+  echo "==== $(date -Iseconds) [$label] (budget $(budget_left)s left) ===="
   "$PYTHON" "$@" || rc=$?
   # IP 차단(exit 75) — 같은 IP라 후속 step 모두 막힘. 전체 세션 종료(다음 cron 재개).
   if [ "$rc" = "75" ]; then
@@ -218,8 +218,10 @@ fi
 # 7) 사진 base64 → Storage
 drain "backfill-photos" crawler/scripts/ingest.py backfill-photos --limit "$PHOTO_LIMIT"
 
-# 7b) 썸네일 생성
-drain "backfill-thumbs" crawler/scripts/ingest.py backfill-thumbs --limit "$THUMB_LIMIT"
+# 7b) 썸네일 — backfill-photos가 업로드 시 자동 생성(store.upsert_photo)하므로
+#     일일 backfill-thumbs는 불필요. 게다가 '미썸네일' 필터가 없어 매일 같은 1000장을
+#     20회 재생성하며 예산 낭비 → 일일 루프에서 제외. 과거 백로그는 필요 시 수동:
+#       ingest.py backfill-thumbs --limit N  (1회)
 
 # 8) 매각결과 (종결 사건) 수집 — 인근 낙찰 통계 기반
 # SALES_DAYS 환경변수로 조회 기간 조정 가능 (기본: 7일 = 어제~오늘 새 매각결과)

@@ -199,8 +199,18 @@ class CourtAuctionClient:
     # ---------- internals ----------
 
     async def _throttle(self) -> None:
-        if self.cfg.min_interval_ms > 0:
-            async with self._throttle_lock:
+        # 락 안에서 간격+체크포인트를 모두 처리 — concurrency≥2에서도 전역으로 적용
+        # (락 밖에서 sleep하면 다른 worker가 계속 쏴 '다발 끊기'가 안 됨).
+        async with self._throttle_lock:
+            self._request_count += 1
+            # 체크포인트 쿨다운 — 요청 다발을 끊어 슬라이딩 윈도우형 rate-limit 회피.
+            if (self.cfg.checkpoint_every > 0
+                    and self._request_count % self.cfg.checkpoint_every == 0):
+                logger.info("checkpoint cooldown: %d requests → pausing %.0fs",
+                            self._request_count, self.cfg.checkpoint_pause_s)
+                await asyncio.sleep(self.cfg.checkpoint_pause_s)
+                self._last_request_at = time.monotonic()
+            if self.cfg.min_interval_ms > 0:
                 # 고정 간격은 봇 패턴 → 매 요청 최소간격 + 0~jitter 랜덤을 목표로.
                 # _slowdown: 차단 감지 시 누적 증가하는 배율 (세션 남은 기간 더 느리게).
                 target_ms = (
@@ -212,14 +222,6 @@ class CourtAuctionClient:
                 if wait_ms > 0:
                     await asyncio.sleep(wait_ms / 1000)
                 self._last_request_at = time.monotonic()
-
-        # 체크포인트 쿨다운 — 요청 다발을 끊어 슬라이딩 윈도우형 rate-limit 회피.
-        self._request_count += 1
-        if (self.cfg.checkpoint_every > 0
-                and self._request_count % self.cfg.checkpoint_every == 0):
-            logger.info("checkpoint cooldown: %d requests → pausing %.0fs",
-                        self._request_count, self.cfg.checkpoint_pause_s)
-            await asyncio.sleep(self.cfg.checkpoint_pause_s)
 
     def _save_raw(self, path: str, payload: dict, body: Any) -> None:
         if not self.cfg.save_dir:

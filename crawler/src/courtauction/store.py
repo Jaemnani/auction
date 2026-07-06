@@ -206,16 +206,24 @@ _DETAIL_STALE_TRIGGERS = {"fail_count", "sale_date", "sale_decision_date", "stat
 
 def _signals_changed(prev: dict, new: dict) -> set[str]:
     """직전 행(prev)과 신규 페이로드(new)의 신호 필드 비교 → 변경된 필드명 집합.
-    양쪽 모두 _to_int/_to_date/_str로 정규화 후 비교(numeric vs str, date 표기 차 흡수)."""
+    양쪽 모두 _to_int/_to_date/_str로 정규화 후 비교(numeric vs str, date 표기 차 흡수).
+
+    주의: new 쪽 값이 None(=검색 응답에 그 필드 없음)이면 '변경'으로 안 봄.
+    페이로드는 None 키를 제거(upsert 시 NULL로 못 씀)하므로, prev(비NULL)↔new(None)를
+    변경으로 처리하면 DB에 반영이 안 돼 매 스캔 재검출 → 이력 스팸 + detail 무한 재수집.
+    (실제 클리어가 필요한 케이스는 드물고, 그 손해가 훨씬 큼.)"""
     changed: set[str] = set()
     for k in _SIGNAL_INT_FIELDS:
-        if _to_int(prev.get(k)) != _to_int(new.get(k)):
+        nv = _to_int(new.get(k))
+        if nv is not None and _to_int(prev.get(k)) != nv:
             changed.add(k)
     for k in _SIGNAL_DATE_FIELDS:
-        if _to_date(prev.get(k)) != _to_date(new.get(k)):
+        nv = _to_date(new.get(k))
+        if nv is not None and _to_date(prev.get(k)) != nv:
             changed.add(k)
     for k in _SIGNAL_STR_FIELDS:
-        if _str(prev.get(k)) != _str(new.get(k)):
+        nv = _str(new.get(k))
+        if nv is not None and _str(prev.get(k)) != nv:
             changed.add(k)
     return changed
 
@@ -607,7 +615,7 @@ class Store:
         try:
             ex = (
                 self.sb.table("properties")
-                .select("id, case_id, maemul_ser, appraisal_amount, min_sale_price, "
+                .select("id, case_id, maemul_ser, deleted_at, appraisal_amount, min_sale_price, "
                         "current_sale_price, fail_count, sale_date, sale_decision_date, "
                         "status_cd")
                 .in_("case_id", case_ids)
@@ -622,12 +630,17 @@ class Store:
         full_upserts: list[dict] = []
         liveness_ids: list[str] = []
         hist_rows: list[dict] = []
+        resurrect_ids: list[str] = []   # soft-delete됐다가 검색에 다시 나타난 행
         for p in deduped:
             prev = existing_map.get((p["case_id"], p["maemul_ser"]))
             if prev is None:
                 # 신규 — full upsert (detail은 detail_synced_at NULL 경로로 자동 수집)
                 full_upserts.append({**p, "last_seen_at": now_iso})
                 continue
+            # 검색에 다시 등장 = 활성 → soft-delete 복구 (close-aged 오삭제/재등록 대응).
+            # 페이로드는 None 키를 제거해 deleted_at=None을 못 실으므로 별도 bulk update.
+            if prev.get("deleted_at") is not None:
+                resurrect_ids.append(prev["id"])
             changed = _signals_changed(prev, p)
             if not changed:
                 liveness_ids.append(prev["id"])  # 변경 없음 → liveness만
@@ -662,6 +675,13 @@ class Store:
             self.sb.table("properties").update(
                 {"last_seen_at": now_iso}
             ).in_("id", chunk).execute()
+        # 부활 — 검색에 다시 등장한 soft-deleted 행 deleted_at 클리어 (+ liveness).
+        for chunk in _chunked(resurrect_ids, 150):
+            self.sb.table("properties").update(
+                {"deleted_at": None, "last_seen_at": now_iso}
+            ).in_("id", chunk).execute()
+        if resurrect_ids:
+            logger.info("resurrected %d previously-deleted properties", len(resurrect_ids))
         # 가격/진행 이력 — 실패해도 페이지는 계속 (부가기능)
         if hist_rows:
             try:
