@@ -7,6 +7,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Property } from "@/lib/types";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
 import { convertAreaText, useAreaUnit } from "@/lib/area-unit";
+import { makeCountBadgeEl, groupByCoord, CLUSTER_LIST_MAX } from "@/lib/map-cluster";
 
 /** Haversine distance in meters. */
 function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -259,11 +260,8 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
 
     if (points.length === 0) return;
 
-    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-    for (const p of points) {
-      const lng = p.longitude!;
-      const lat = p.latitude!;
-      // road_addr 우선, 없으면 conv_addr/lot_addr는 단위 변환
+    // 한 매물의 팝업 카드 HTML (겹침 시 목록의 한 항목으로도 재사용).
+    const cardHtml = (p: Property) => {
       const addrPlain = p.road_addr;
       const addrFallback = p.lot_addr || p.conv_addr;
       const addr = addrPlain || (addrFallback ? convertAreaText(addrFallback, unit) : "-");
@@ -273,21 +271,39 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
       const buildingNote = p.building_summary
         ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
         : "";
-      const html = `
-        <div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">
-          <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
-          <div style="font-weight:600;margin-top:2px;word-break:keep-all">${escapeHtml(addr)}</div>
-          ${subAddr}
-          ${buildingNote}
-          <div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
-          <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>
-          ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}
-        </div>
-      `;
-      const popup = new Popup({ offset: 18, closeButton: true, maxWidth: "320px" }).setHTML(html);
-      const marker = new Marker({ color: markerColor(p.usage_lcl_cd) })
-        .setLngLat([lng, lat])
-        .setPopup(popup)
+      return `
+        <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
+        <div style="font-weight:600;margin-top:2px;word-break:keep-all">${escapeHtml(addr)}</div>
+        ${subAddr}
+        ${buildingNote}
+        <div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
+        <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>
+        ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
+    };
+
+    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+    // 좌표별로 묶어 겹침을 처리 (겹치면 개수 배지 + 선택 목록 팝업).
+    for (const grp of groupByCoord(points, (p) => p.longitude!, (p) => p.latitude!)) {
+      const p0 = grp[0];
+      const lng = p0.longitude!, lat = p0.latitude!;
+
+      let html: string;
+      let marker: Marker;
+      if (grp.length === 1) {
+        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0)}</div>`;
+        marker = new Marker({ color: markerColor(p0.usage_lcl_cd) });
+      } else {
+        const shown = grp.slice(0, CLUSTER_LIST_MAX);
+        const more = grp.length - shown.length;
+        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:320px;max-height:320px;overflow-y:auto">
+            <div style="font-weight:700;margin-bottom:6px">이 위치에 ${grp.length}건</div>
+            ${shown.map((p, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${cardHtml(p)}</div>`).join("")}
+            ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
+          </div>`;
+        marker = new Marker({ element: makeCountBadgeEl(grp.length) });
+      }
+      marker.setLngLat([lng, lat])
+        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "340px" }).setHTML(html))
         .addTo(map);
       markersRef.current.push(marker);
 
