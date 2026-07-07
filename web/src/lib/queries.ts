@@ -141,6 +141,8 @@ export async function fetchProperties(
     .select(LIST_PROPERTY_SELECT, { count: "exact" })
     .is("deleted_at", null)
     // 썸네일은 최소 seq 1장만 필요 — 임베드 photos를 1건으로 제한 (전체 조인 방지).
+    // storage_path 있는 것만 — 첫 사진이 아직 미업로드면 다음 업로드된 걸로 폴백.
+    .not("property_photos.storage_path", "is", null)
     .order("seq", { referencedTable: "property_photos", ascending: true })
     .limit(1, { referencedTable: "property_photos" });
   q = applyFilters(q, filters);

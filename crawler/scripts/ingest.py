@@ -314,6 +314,10 @@ async def cmd_backfill(args: argparse.Namespace) -> None:
                             store.upsert_detail, court, case_no, seq, result
                         )
                         totals["ok"] += 1
+                    except IpBlocked:
+                        # 삼키면 남은 target마다 22분 backoff 반복 → 예산 낭비 + exit 75
+                        # 미발생. 즉시 전파해 세션 종료(run_daily가 감지, 다음 실행 재개).
+                        raise
                     except Exception as e:
                         totals["failed"] += 1
                         print(f"    ! {court}/{case_no}#{seq}: {e}")
