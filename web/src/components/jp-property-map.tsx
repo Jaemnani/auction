@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import maplibregl, { Map as MlMap, Marker, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { makeCountBadgeEl, groupByCoord, CLUSTER_LIST_MAX } from "@/lib/map-cluster";
 
 const JAPAN_BOUNDS: [[number, number], [number, number]] = [
   [122.0, 24.0],
@@ -125,22 +126,39 @@ export function JpPropertyMap({ rows }: Props) {
 
     if (filteredRows.length === 0) return;
 
-    for (const r of filteredRows) {
-      const popupHtml = `
-        <div style="font-size:12px;min-width:200px">
-          <div style="font-family:monospace;color:#71717a;font-size:11px">${r.case_no ?? r.sale_unit_id}</div>
-          <div style="font-weight:600;margin-top:2px">${r.court_name ?? "—"}</div>
-          ${r.address_text ? `<div style="color:#52525b;font-size:11px;margin-top:2px;word-break:keep-all">${r.address_text}</div>` : ""}
-          <div style="margin-top:6px">
-            <span style="display:inline-block;background:#fed7aa;color:#7c2d12;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
-            <span style="font-family:monospace;margin-left:6px;font-weight:600">${fmtJpy(r.sale_standard_price)}</span>
-          </div>
-          <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>
-        </div>
-      `;
-      const marker = new maplibregl.Marker({ color: "#c2410c" })
-        .setLngLat([r.longitude, r.latitude])
-        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "300px" }).setHTML(popupHtml))
+    // 같은 좌표에 겹친 매물(예: 같은 맨션·사건의 여러 물건)은 마커가 포개져
+    // 클릭 시 엉뚱한 매물이 잡힘 → 좌표별로 묶어 개수 배지 + 선택 목록 팝업.
+    const groups = groupByCoord(filteredRows, (r) => r.longitude, (r) => r.latitude);
+
+    const rowCard = (r: JpMapRow) => `
+      <div style="font-family:monospace;color:#71717a;font-size:11px">${r.case_no ?? r.sale_unit_id}</div>
+      <div style="font-weight:600;margin-top:2px">${r.court_name ?? "—"}</div>
+      ${r.address_text ? `<div style="color:#52525b;font-size:11px;margin-top:2px;word-break:keep-all">${r.address_text}</div>` : ""}
+      <div style="margin-top:6px">
+        <span style="display:inline-block;background:#fed7aa;color:#7c2d12;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
+        <span style="font-family:monospace;margin-left:6px;font-weight:600">${fmtJpy(r.sale_standard_price)}</span>
+      </div>
+      <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>`;
+
+    for (const gr of groups) {
+      const r0 = gr[0];
+      let popupHtml: string;
+      let marker: Marker;
+      if (gr.length === 1) {
+        popupHtml = `<div style="font-size:12px;min-width:200px">${rowCard(r0)}</div>`;
+        marker = new maplibregl.Marker({ color: "#c2410c" });
+      } else {
+        const shown = gr.slice(0, CLUSTER_LIST_MAX);
+        const more = gr.length - shown.length;
+        popupHtml = `<div style="font-size:12px;min-width:220px;max-width:300px;max-height:320px;overflow-y:auto">
+             <div style="font-weight:700;margin-bottom:4px">이 위치에 ${gr.length}건</div>
+             ${shown.map((r, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${rowCard(r)}</div>`).join("")}
+             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
+           </div>`;
+        marker = new maplibregl.Marker({ element: makeCountBadgeEl(gr.length) });
+      }
+      marker.setLngLat([r0.longitude, r0.latitude])
+        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "320px" }).setHTML(popupHtml))
         .addTo(map);
       markersRef.current.push(marker);
     }
