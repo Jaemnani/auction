@@ -1,19 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import maplibregl, { Map as MlMap, Marker, Popup } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import { makeCountBadgeEl, groupByCoord, CLUSTER_LIST_MAX } from "@/lib/map-cluster";
+import {
+  GOOGLE_MAPS_API_KEY,
+  GOOGLE_MAP_ID,
+  loadGoogleMaps,
+  createProjectionHelper,
+  containerPxToLatLng,
+  makePin,
+} from "@/lib/google-maps";
+import { MapKeyNotice } from "@/components/map-key-notice";
 
-const JAPAN_BOUNDS: [[number, number], [number, number]] = [
-  [122.0, 24.0],
-  [153.0, 46.0],
-];
 // 지도 시작 위치 — 도쿄都庁. 일본 매물의 대부분이 関東권에 집중 → 도쿄에서 시작.
 // (이전엔 일본 중심 [138, 36.5] → 첫 화면이 太平洋 위로 보임)
-const DEFAULT_CENTER: [number, number] = [139.6917, 35.6895];
+const DEFAULT_CENTER = { lat: 35.6895, lng: 139.6917 };
 const DEFAULT_ZOOM = 10;
-const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 export type JpMapRow = {
   sale_unit_id: string;
@@ -56,9 +58,13 @@ type CircleSel = {
 
 export function JpPropertyMap({ rows }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MlMap | null>(null);
-  const markersRef = useRef<Marker[]>([]);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const projectionRef = useRef<google.maps.OverlayView | null>(null);
 
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   // 원형 선택 상태
   const [drawMode, setDrawMode] = useState(false);
   const [circle, setCircle] = useState<CircleSel>(null);
@@ -78,51 +84,70 @@ export function JpPropertyMap({ rows }: Props) {
     [filteredRows],
   );
 
-  // map 인스턴스 1회 생성
+  // map 인스턴스 1회 생성 (Google Maps는 destroy API가 없어 재생성하지 않음)
   useEffect(() => {
+    if (!GOOGLE_MAPS_API_KEY) return;
     if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: STYLE_URL,
-      // 항상 도쿄에서 시작 — 일본 매물 대부분이 関東권. 첫 화면에 즉시 마커 보임.
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      fitBoundsOptions: { padding: 40 },
-      attributionControl: { compact: true },
-    });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-    map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
-    map.once("load", () => map.resize());
-    mapRef.current = map;
+    let cancelled = false;
+
+    loadGoogleMaps()
+      .then(() => {
+        if (cancelled || !containerRef.current || mapRef.current) return;
+        const map = new google.maps.Map(containerRef.current, {
+          mapId: GOOGLE_MAP_ID,
+          // 항상 도쿄에서 시작 — 일본 매물 대부분이 関東권. 첫 화면에 즉시 마커 보임.
+          center: DEFAULT_CENTER,
+          zoom: DEFAULT_ZOOM,
+          gestureHandling: "greedy",
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: true,
+          scaleControl: true,
+          clickableIcons: false,
+        });
+        mapRef.current = map;
+        projectionRef.current = createProjectionHelper(map);
+        infoWindowRef.current = new google.maps.InfoWindow({ maxWidth: 320 });
+        setMapReady(true);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setMapError(e instanceof Error ? e.message : String(e));
+      });
+
+    const container = containerRef.current;
     return () => {
-      map.remove();
+      cancelled = true;
+      if (mapRef.current) google.maps.event.clearInstanceListeners(mapRef.current);
+      projectionRef.current?.setMap(null);
+      projectionRef.current = null;
+      infoWindowRef.current?.close();
+      infoWindowRef.current = null;
+      markersRef.current.forEach((m) => { m.map = null; });
+      markersRef.current = [];
       mapRef.current = null;
+      if (container) container.innerHTML = "";
+      setMapReady(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // drawMode 변경 시 maplibre dragPan / scrollZoom 토글
+  // drawMode 변경 시 지도 제스처 토글 (오버레이가 이벤트를 가로채지만 안전망)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (drawMode) {
-      map.dragPan.disable();
-      map.boxZoom.disable();
-      map.dragRotate.disable();
-    } else {
-      map.dragPan.enable();
-      map.boxZoom.enable();
-      map.dragRotate.enable();
-    }
-  }, [drawMode]);
+    map.setOptions({
+      gestureHandling: drawMode ? "none" : "greedy",
+      disableDoubleClickZoom: drawMode,
+    });
+  }, [drawMode, mapReady]);
 
   // 마커 렌더 — filteredRows 기준
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
-    for (const m of markersRef.current) m.remove();
+    markersRef.current.forEach((m) => { m.map = null; });
     markersRef.current = [];
+    infoWindowRef.current?.close();
 
     if (filteredRows.length === 0) return;
 
@@ -143,10 +168,10 @@ export function JpPropertyMap({ rows }: Props) {
     for (const gr of groups) {
       const r0 = gr[0];
       let popupHtml: string;
-      let marker: Marker;
+      let content: HTMLElement;
       if (gr.length === 1) {
         popupHtml = `<div style="font-size:12px;min-width:200px">${rowCard(r0)}</div>`;
-        marker = new maplibregl.Marker({ color: "#c2410c" });
+        content = makePin("#c2410c").element;
       } else {
         const shown = gr.slice(0, CLUSTER_LIST_MAX);
         const more = gr.length - shown.length;
@@ -155,21 +180,34 @@ export function JpPropertyMap({ rows }: Props) {
              ${shown.map((r, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${rowCard(r)}</div>`).join("")}
              ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
            </div>`;
-        marker = new maplibregl.Marker({ element: makeCountBadgeEl(gr.length) });
+        content = makeCountBadgeEl(gr.length);
       }
-      marker.setLngLat([r0.longitude, r0.latitude])
-        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "320px" }).setHTML(popupHtml))
-        .addTo(map);
+      const marker = new google.maps.marker.AdvancedMarkerElement({
+        map,
+        position: { lat: r0.latitude, lng: r0.longitude },
+        content,
+        gmpClickable: true,
+      });
+      marker.addListener("click", () => {
+        const iw = infoWindowRef.current;
+        if (!iw) return;
+        iw.setContent(popupHtml);
+        iw.open({ map, anchor: marker });
+      });
       markersRef.current.push(marker);
     }
 
-    // 원 안 마커가 있고 사용자가 그린 직후라면 fit
+    // 원 안 마커가 있고 사용자가 그린 직후라면 fit (maxZoom 14 상한)
     if (circle && filteredRows.length > 0) {
-      const bounds = new maplibregl.LngLatBounds();
-      for (const r of filteredRows) bounds.extend([r.longitude, r.latitude]);
-      map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 600 });
+      const bounds = new google.maps.LatLngBounds();
+      for (const r of filteredRows) bounds.extend({ lat: r.latitude, lng: r.longitude });
+      map.fitBounds(bounds, 60);
+      google.maps.event.addListenerOnce(map, "idle", () => {
+        const z = map.getZoom();
+        if (z != null && z > 14) map.setZoom(14);
+      });
     }
-  }, [pointsKey, filteredRows, circle]);
+  }, [pointsKey, filteredRows, circle, mapReady]);
 
   // 오버레이 마우스 이벤트 — drawMode 시에만 활성
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -195,19 +233,19 @@ export function JpPropertyMap({ rows }: Props) {
 
   const onMouseUp = useCallback((e: React.MouseEvent) => {
     if (!drawing || !mapRef.current) return;
-    const map = mapRef.current;
     const rect = e.currentTarget.getBoundingClientRect();
     const x1 = e.clientX - rect.left;
     const y1 = e.clientY - rect.top;
     // px → lng/lat 변환
-    const center = map.unproject([drawing.x0, drawing.y0]);
-    const edge = map.unproject([x1, y1]);
-    const radiusM = distanceM(center.lng, center.lat, edge.lng, edge.lat);
+    const center = containerPxToLatLng(projectionRef.current, drawing.x0, drawing.y0);
+    const edge = containerPxToLatLng(projectionRef.current, x1, y1);
     setDrawing(null);
+    if (!center || !edge) { setDrawMode(false); return; }
+    const radiusM = distanceM(center.lng(), center.lat(), edge.lng(), edge.lat());
     if (radiusM > 50) {  // 너무 작으면 무시 (실수 클릭)
       setCircle({
-        centerLng: center.lng,
-        centerLat: center.lat,
+        centerLng: center.lng(),
+        centerLat: center.lat(),
         radiusM,
       });
     } else {
@@ -221,6 +259,10 @@ export function JpPropertyMap({ rows }: Props) {
   const drawingPxRadius = drawing
     ? Math.hypot(drawing.x1 - drawing.x0, drawing.y1 - drawing.y0)
     : 0;
+
+  if (!GOOGLE_MAPS_API_KEY || mapError) {
+    return <MapKeyNotice error={mapError} className="h-[70vh] min-h-[500px]" />;
+  }
 
   return (
     <div className="relative h-[70vh] min-h-[500px] rounded-lg border overflow-hidden">

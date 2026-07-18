@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import maplibregl, { LngLatBoundsLike, Map as MlMap, Marker, Popup } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import type { Property } from "@/lib/types";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
 import { convertAreaText, useAreaUnit } from "@/lib/area-unit";
 import { makeCountBadgeEl, groupByCoord, CLUSTER_LIST_MAX } from "@/lib/map-cluster";
+import {
+  GOOGLE_MAPS_API_KEY,
+  GOOGLE_MAP_ID,
+  loadGoogleMaps,
+  createProjectionHelper,
+  containerPxToLatLng,
+  makePin,
+} from "@/lib/google-maps";
+import { MapKeyNotice } from "@/components/map-key-notice";
 
 /** Haversine distance in meters. */
 function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -24,16 +31,10 @@ function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): numb
 
 type CircleSel = { centerLng: number; centerLat: number; radiusM: number } | null;
 
-// 한국 영토 박스 (bbox 클라이언트 필터용 — KOREA_BOUNDS 는 이름만 유지).
-const KOREA_BOUNDS: [[number, number], [number, number]] = [
-  [124.5, 33.0],
-  [131.9, 38.7],
-];
 // 지도 시작 위치 — 서울시청. 매물이 많은 지역에서 시작하면 즉시 마커 보임.
 // (이전엔 한국 전체 중심 [127.8, 36.5] → 첫 화면이 비어 보였음)
-const DEFAULT_CENTER: [number, number] = [126.9784, 37.5666];
+const DEFAULT_CENTER = { lat: 37.5666, lng: 126.9784 };
 const DEFAULT_ZOOM = 11;
-const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 /** usage_lcl_cd 별 마커 색.
  * 사용자가 lcl 필터를 적용 안 한 상태에서도 차량/토지/건물이 한눈에 구분되도록.
@@ -64,8 +65,14 @@ type Props = {
 
 export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilters = [] }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MlMap | null>(null);
-  const markersRef = useRef<Marker[]>([]);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const projectionRef = useRef<google.maps.OverlayView | null>(null);
+  // fitBounds·InfoWindow auto-pan 등 프로그램 이동이 만드는 idle 이벤트를
+  // 새로고침 트리거에서 제외. 카운터 대신 시간 창 — 이동이 실제로 일어나지
+  // 않아도 (idle 미발생) 억제 상태가 새지 않음.
+  const suppressUntilRef = useRef(0);
   const sp = useSearchParams();
   const { unit } = useAreaUnit();
 
@@ -74,6 +81,8 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
   const [autoMode, setAutoMode] = useState(autoRefresh);
   const [showRefreshBtn, setShowRefreshBtn] = useState(false);
   const [count, setCount] = useState<number>(initialRows.length);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   // 원형 영역 선택
   const [drawMode, setDrawMode] = useState(false);
   const [circle, setCircle] = useState<CircleSel>(null);
@@ -110,14 +119,17 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
   const refresh = async () => {
     const map = mapRef.current;
     if (!map) return;
+    const b = map.getBounds();
+    if (!b) return;
     setLoading(true);
     try {
-      const b = map.getBounds();
+      const ne = b.getNorthEast();
+      const sw = b.getSouthWest();
       const params = new URLSearchParams(sp.toString());
-      params.set("min_lng", String(b.getWest()));
-      params.set("max_lng", String(b.getEast()));
-      params.set("min_lat", String(b.getSouth()));
-      params.set("max_lat", String(b.getNorth()));
+      params.set("min_lng", String(sw.lng()));
+      params.set("max_lng", String(ne.lng()));
+      params.set("min_lat", String(sw.lat()));
+      params.set("max_lat", String(ne.lat()));
       params.set("max", "2000");
       const r = await fetch(`/api/map/markers?${params.toString()}`);
       const j = await r.json();
@@ -131,71 +143,96 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
     }
   };
 
-  // Map 인스턴스 1회 생성
+  // idle 핸들러가 항상 최신 상태를 보도록 ref로 전달 (map은 1회만 생성).
+  const refreshRef = useRef(refresh);
+  const autoModeRef = useRef(autoMode);
   useEffect(() => {
+    refreshRef.current = refresh;
+    autoModeRef.current = autoMode;
+  });
+
+  // Map 인스턴스 1회 생성 (Google Maps는 destroy API가 없어 재생성하지 않음)
+  useEffect(() => {
+    if (!GOOGLE_MAPS_API_KEY) return;
     if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: STYLE_URL,
-      // 항상 서울에서 시작 (이전엔 매물 0건 시 전국 bounds로 fit → 첫 화면 비어보임).
-      // 매물이 있어도 첫 매물 위치 대신 서울 시작 — 사용자가 명시적으로 다른 지역
-      // 필터링했다면 후속 fitBounds로 자동 이동 가능 (현재는 안 함, 다음 단계).
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      fitBoundsOptions: { padding: 24 },
-      attributionControl: { compact: true },
-    });
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
-    map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+    let cancelled = false;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
 
-    // 사용자 이동 종료 — moveend는 zoom/pan/회전 모두 트리거
-    let userMoved = false;
-    const onMoveStart = (e: maplibregl.MapLibreEvent) => {
-      // originalEvent 있으면 사용자 액션, 없으면 프로그램 호출 (fitBounds 등)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((e as any).originalEvent) userMoved = true;
-    };
-    const onMoveEnd = () => {
-      if (!userMoved) return;
-      userMoved = false;
-      if (autoMode) {
-        // throttle: 800ms 디바운스
-        clearTimeout(debounce);
-        debounce = setTimeout(refresh, 800);
-      } else {
-        setShowRefreshBtn(true);
-      }
-    };
-    let debounce: ReturnType<typeof setTimeout>;
-    map.on("movestart", onMoveStart);
-    map.on("moveend", onMoveEnd);
+    loadGoogleMaps()
+      .then(() => {
+        if (cancelled || !containerRef.current || mapRef.current) return;
+        const map = new google.maps.Map(containerRef.current, {
+          mapId: GOOGLE_MAP_ID,
+          // 항상 서울에서 시작 (이전엔 매물 0건 시 전국 bounds로 fit → 첫 화면 비어보임).
+          center: DEFAULT_CENTER,
+          zoom: DEFAULT_ZOOM,
+          gestureHandling: "greedy",
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: true,
+          scaleControl: true,
+          clickableIcons: false, // POI 클릭이 마커 클릭을 가로채지 않게
+        });
+        mapRef.current = map;
+        projectionRef.current = createProjectionHelper(map);
+        infoWindowRef.current = new google.maps.InfoWindow({ maxWidth: 340 });
+        // 초기 로드 직후 타일 로드·레이아웃 변동으로 오는 idle 연쇄는 무시
+        suppressUntilRef.current = performance.now() + 2000;
 
-    mapRef.current = map;
-    map.once("load", () => map.resize());
+        // idle은 pan/zoom 종료마다 발생하고 초기 로드에서도 여러 번 올 수 있음.
+        // bounds가 실제로 변했을 때만 트리거 (초기 로드 idle 연쇄 방지) +
+        // 프로그램 이동(suppressUntilRef 시간 창)은 제외.
+        let lastBoundsKey: string | null = null;
+        map.addListener("idle", () => {
+          const b = map.getBounds();
+          if (!b) return;
+          const ne = b.getNorthEast(), sw = b.getSouthWest();
+          const key = [sw.lng(), sw.lat(), ne.lng(), ne.lat()]
+            .map((v) => v.toFixed(4)).join(",");
+          if (lastBoundsKey === null) { lastBoundsKey = key; return; }
+          if (key === lastBoundsKey) return;
+          lastBoundsKey = key;
+          if (performance.now() < suppressUntilRef.current) return;
+          if (autoModeRef.current) {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => refreshRef.current(), 800);
+          } else {
+            setShowRefreshBtn(true);
+          }
+        });
+        setMapReady(true);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setMapError(e instanceof Error ? e.message : String(e));
+      });
+
+    const container = containerRef.current;
     return () => {
+      cancelled = true;
       clearTimeout(debounce);
-      map.off("movestart", onMoveStart);
-      map.off("moveend", onMoveEnd);
-      map.remove();
+      if (mapRef.current) google.maps.event.clearInstanceListeners(mapRef.current);
+      projectionRef.current?.setMap(null);
+      projectionRef.current = null;
+      infoWindowRef.current?.close();
+      infoWindowRef.current = null;
+      markersRef.current.forEach((m) => { m.map = null; });
+      markersRef.current = [];
       mapRef.current = null;
+      // StrictMode 재마운트 시 이전 지도 DOM이 남지 않게 비움
+      if (container) container.innerHTML = "";
+      setMapReady(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoMode]);
+  }, []);
 
-  // drawMode 변경 시 maplibre 인터랙션 토글 + 마우스 핸들러
+  // drawMode 변경 시 지도 제스처 토글 (오버레이가 이벤트를 가로채지만 안전망)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (drawMode) {
-      map.dragPan.disable();
-      map.boxZoom.disable();
-      map.dragRotate.disable();
-    } else {
-      map.dragPan.enable();
-      map.boxZoom.enable();
-      map.dragRotate.enable();
-    }
-  }, [drawMode]);
+    map.setOptions({
+      gestureHandling: drawMode ? "none" : "greedy",
+      disableDoubleClickZoom: drawMode,
+    });
+  }, [drawMode, mapReady]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (!drawMode) return;
@@ -218,27 +255,31 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
 
   const onMouseUp = useCallback((e: React.MouseEvent) => {
     if (!drawing || !mapRef.current) return;
-    const map = mapRef.current;
     const rect = e.currentTarget.getBoundingClientRect();
     const x1 = e.clientX - rect.left;
     const y1 = e.clientY - rect.top;
-    const center = map.unproject([drawing.x0, drawing.y0]);
-    const edge = map.unproject([x1, y1]);
-    const radiusM = distanceM(center.lng, center.lat, edge.lng, edge.lat);
+    const center = containerPxToLatLng(projectionRef.current, drawing.x0, drawing.y0);
+    const edge = containerPxToLatLng(projectionRef.current, x1, y1);
     setDrawing(null);
+    if (!center || !edge) { setDrawMode(false); return; }
+    const radiusM = distanceM(center.lng(), center.lat(), edge.lng(), edge.lat());
     if (radiusM > 50) {
-      setCircle({ centerLng: center.lng, centerLat: center.lat, radiusM });
+      setCircle({ centerLng: center.lng(), centerLat: center.lat(), radiusM });
       // 원 내부로 fit
       setTimeout(() => {
         const m = mapRef.current;
         if (!m) return;
         // 반경 기반 대략 bbox
         const dLat = (radiusM / 111320);
-        const dLng = (radiusM / (111320 * Math.cos(center.lat * Math.PI / 180)));
-        m.fitBounds([
-          [center.lng - dLng, center.lat - dLat],
-          [center.lng + dLng, center.lat + dLat],
-        ], { padding: 40, duration: 600 });
+        const dLng = (radiusM / (111320 * Math.cos(center.lat() * Math.PI / 180)));
+        suppressUntilRef.current = performance.now() + 1500;
+        m.fitBounds(
+          new google.maps.LatLngBounds(
+            { lat: center.lat() - dLat, lng: center.lng() - dLng },
+            { lat: center.lat() + dLat, lng: center.lng() + dLng },
+          ),
+          40,
+        );
       }, 50);
     } else {
       setCircle(null);
@@ -253,10 +294,11 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
   // 마커 갱신
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
-    markersRef.current.forEach((m) => m.remove());
+    markersRef.current.forEach((m) => { m.map = null; });
     markersRef.current = [];
+    infoWindowRef.current?.close();
 
     if (points.length === 0) return;
 
@@ -281,17 +323,16 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
         ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
     };
 
-    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
     // 좌표별로 묶어 겹침을 처리 (겹치면 개수 배지 + 선택 목록 팝업).
     for (const grp of groupByCoord(points, (p) => p.longitude!, (p) => p.latitude!)) {
       const p0 = grp[0];
       const lng = p0.longitude!, lat = p0.latitude!;
 
       let html: string;
-      let marker: Marker;
+      let content: HTMLElement;
       if (grp.length === 1) {
         html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0)}</div>`;
-        marker = new Marker({ color: markerColor(p0.usage_lcl_cd) });
+        content = makePin(markerColor(p0.usage_lcl_cd)).element;
       } else {
         const shown = grp.slice(0, CLUSTER_LIST_MAX);
         const more = grp.length - shown.length;
@@ -300,22 +341,28 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
             ${shown.map((p, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${cardHtml(p)}</div>`).join("")}
             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
           </div>`;
-        marker = new Marker({ element: makeCountBadgeEl(grp.length) });
+        content = makeCountBadgeEl(grp.length);
       }
-      marker.setLngLat([lng, lat])
-        .setPopup(new Popup({ offset: 18, closeButton: true, maxWidth: "340px" }).setHTML(html))
-        .addTo(map);
+      const marker = new google.maps.marker.AdvancedMarkerElement({
+        map,
+        position: { lat, lng },
+        content,
+        gmpClickable: true,
+      });
+      marker.addListener("click", () => {
+        const iw = infoWindowRef.current;
+        if (!iw) return;
+        // InfoWindow auto-pan이 idle을 발생시키므로 새로고침 트리거에서 제외
+        suppressUntilRef.current = performance.now() + 1200;
+        iw.setContent(html);
+        iw.open({ map, anchor: marker });
+      });
       markersRef.current.push(marker);
-
-      if (lng < minLng) minLng = lng;
-      if (lat < minLat) minLat = lat;
-      if (lng > maxLng) maxLng = lng;
-      if (lat > maxLat) maxLat = lat;
     }
-    // initialRows 변경 시 (필터 변경 등) 마커 영역으로 줌
-    // bbox refresh로 들어온 새 rows에는 fit 안 함 (사용자 viewport 유지)
+    // initialRows 변경 시 (필터 변경 등) 마커 영역으로 줌은 하지 않음
+    // bbox refresh로 들어온 새 rows에도 fit 안 함 (사용자 viewport 유지)
     // unit 변경 시에도 popup 재생성 — popup HTML이 unit에 의존
-  }, [pointsKey, unit]);
+  }, [pointsKey, unit, mapReady]);
 
   // 어떤 lcl이 결과에 존재하는지 — legend에서 해당 항목만 굵게 강조
   const presentLcls = useMemo(() => {
@@ -323,6 +370,10 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
     for (const p of points) if (p.usage_lcl_cd) s.add(p.usage_lcl_cd);
     return s;
   }, [points]);
+
+  if (!GOOGLE_MAPS_API_KEY || mapError) {
+    return <MapKeyNotice error={mapError} className="h-[480px]" />;
+  }
 
   return (
     <div className="relative">
