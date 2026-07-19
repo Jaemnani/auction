@@ -407,9 +407,12 @@ class CourtAuctionClient:
         return body["data"]["usgLclLst"]
 
     async def list_usage_mcl(self, lcl_code: str) -> list[dict]:
+        # 실제 사이트 JS(getUsgMclLst)는 {"code": lclCd}로 요청 — 과거 파라미터명
+        # (lclDspslGdsLstUsgCd)은 200 + 빈 목록을 반환해 usage_codes level2가
+        # 영영 안 채워졌음 (recon 캡처 bodies/0022.txt로 확인).
         body = await self.post(
             "/pgj/pgj002/selectMclLst.on",
-            {"lclDspslGdsLstUsgCd": lcl_code},
+            {"code": lcl_code},
             expect_keys=["usgMclLst"],
         )
         return body["data"]["usgMclLst"]
@@ -417,7 +420,7 @@ class CourtAuctionClient:
     async def list_usage_scl(self, mcl_code: str) -> list[dict]:
         body = await self.post(
             "/pgj/pgj002/selectSclLst.on",
-            {"mclDspslGdsLstUsgCd": mcl_code},
+            {"code": mcl_code},
             expect_keys=["usgSclLst"],
         )
         return body["data"]["usgSclLst"]

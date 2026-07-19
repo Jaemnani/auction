@@ -507,6 +507,13 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                         via_llm = True
                         n_llm_updated += 1
 
+                # tousho(離島) 검증 가드 — LLM이 본토 매물(佐世保市·諫早市 등)에도
+                # 離島를 붙이는 오분류 실측. 沖縄(47)이거나 주소에 '島'가 있을 때만 인정
+                # (対馬市·五島市·壱岐 등은 통과).
+                if "tousho" in cats and str(r.get("prefecture_code") or "") != "47" \
+                        and "島" not in (r.get("address_text") or ""):
+                    cats = [c for c in cats if c != "tousho"]
+
                 if sorted(prev) == sorted(cats):
                     continue
 

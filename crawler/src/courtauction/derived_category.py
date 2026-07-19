@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 # 단독·다가구 (dspslUsgNm) — 전원주택/도심단독/농가 후보군
@@ -107,13 +108,16 @@ def derive_categories(
     # 제외 1: "집합건물" 표기 = 구분소유 호수 매각 (근린시설의 85%가 이 케이스).
     # 제외 2: "[토지 ...]"만 있는 물건 = 같은 사건의 부지/도로 필지 (전체 태깅의
     #         30%가 이 케이스였음 — 건물 없는 매각은 통건물이 아님).
-    # 제외 3: 지분매각(share_sale) — "전체"가 아님.
-    # risk_flags NULL(detail 미수집)은 지분 여부 미상 → 관대하게 포함.
+    # 제외 3: 지분매각 — "전체"가 아님. risk_flags(share_sale)는 detail 수집 후에야
+    #         붙으므로 conv_addr의 "지분 N분의 M" 표기도 직접 검사
+    #         (실측: detail 백필 전 통건물 태깅 → 나중에 지분으로 밝혀진 케이스 2건).
     risk = prop.get("risk_flags") or []
     if (usg in WHOLE_BUILDING_USG_NMS
             and "[건물" in text
             and "집합건물" not in text
-            and "share_sale" not in risk):
+            and "share_sale" not in risk
+            and "지분" not in text
+            and not re.search(r"\d+분의\s*\d+", text)):
         cats.append("whole_building")
 
     if usg in SINGLE_HOUSE_USG_NMS:
