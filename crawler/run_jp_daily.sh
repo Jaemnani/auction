@@ -141,10 +141,10 @@ step "close-aged" crawler/scripts/jp_ingest.py close-aged --since "$RUN_SINCE_IS
 
 # 5) 파생 카테고리 (別荘/空き家/リゾート/離島) — 신규 戸建て 매물 자동 분류.
 #    GEMINI_API_KEY 있으면 룰 미분류 戸建て에 Gemini Flash Lite 보강.
+# 룰 패스는 매일 전량 재계산(--force) — 늦게 도착한 입력·룰 변경 반영 (KR과 동일 근거).
+step "backfill-categories (rule, force)" crawler/scripts/jp_ingest.py backfill-categories --force
 if [ -n "${GEMINI_API_KEY:-}" ]; then
-  step "backfill-categories (rule+LLM)" crawler/scripts/jp_ingest.py backfill-categories --llm
-else
-  step "backfill-categories (rule only)" crawler/scripts/jp_ingest.py backfill-categories
+  step "backfill-categories (LLM incr)" crawler/scripts/jp_ingest.py backfill-categories --llm
 fi
 
 # 6) 30일 지난 로그 정리

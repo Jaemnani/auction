@@ -485,6 +485,12 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
             try:
                 cats = derive_categories(r)
                 via_llm = False
+                prev = r.get("derived_category") or []
+
+                # --force 재계산이 과거 LLM 분류를 지우지 않도록: 룰이 아무것도
+                # 못 냈고 기존 값이 있으면 유지 (지우면 다음 LLM 패스가 매일 재호출).
+                if args.force and not cats and prev:
+                    cats = list(prev)
 
                 # 룰 미분류 + 戸建て + LLM 활성 → Gemini 호출
                 if (not cats and classifier is not None
@@ -501,7 +507,6 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                         via_llm = True
                         n_llm_updated += 1
 
-                prev = r.get("derived_category") or []
                 if sorted(prev) == sorted(cats):
                     continue
 

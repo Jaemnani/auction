@@ -47,6 +47,7 @@ const USAGE_NM_GROUPS: Array<{ title: string; items: string[] }> = [
  *  룰 엔진이 채움. 사용자 정의 분류 (사이트 기본 카테고리에 없음).
  */
 const DERIVED_OPTIONS: Array<{ code: string; label: string; desc: string }> = [
+  { code: "whole_building", label: "통건물", desc: "단독·다가구·근린시설 건물 전체(+대지) 일괄 매각 — 지분매각 제외" },
   { code: "country_house", label: "전원주택",  desc: "단독·다가구 + 외곽 sgg(군) 또는 전원/농가 키워드" },
   { code: "townhouse",     label: "도심 단독", desc: "단독·다가구 + 광역시/인구 50만+ 일반시" },
   { code: "farm_house",    label: "농가주택",  desc: "단독·다가구 + 농가/축사 키워드" },
@@ -495,9 +496,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
           })}
         </div>
         <div className="text-caption-xs text-muted-foreground mt-3 border-t pt-2">
-          분류는 ingest 시 자동. 기존 매물 일괄 분류는
-          <code className="bg-muted px-1 mx-1 rounded">crawler/scripts/ingest.py backfill-categories</code>
-          1회 실행 (마이그레이션 0013 적용 후).
+          일일 크롤 파이프라인이 매일 전체 재분류 (run_daily.sh → backfill-categories --force).
         </div>
       </details>
 

@@ -743,7 +743,8 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                 store.sb.table("properties")
                 .select(
                     "id, usage_nm, sd_code, sgg_code, conv_addr, road_addr, "
-                    "lot_addr, area_summary, building_summary, derived_category"
+                    "lot_addr, area_summary, building_summary, derived_category, "
+                    "risk_flags"
                 )
                 .not_.is_("usage_nm", "null")
                 .order("id")
@@ -768,11 +769,24 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                 sgg_name = sgg_name_by_pair.get((sd, sgg))
                 sd_name = sd_name_by_code.get(sd, "")
 
+                # 위치성 카테고리 — 룰 또는 LLM이 붙임. whole_building과 구분해 다룸.
+                LOCATION_CATS = {"country_house", "townhouse", "farm_house", "vacation_home"}
+
                 cats = derive_categories(r, sgg_name=sgg_name)
                 via_llm = False
+                prev = r.get("derived_category") or []
 
-                # 룰 미분류 + 단독·다가구 + LLM 활성 → Gemini 호출
-                if (not cats and classifier is not None
+                # --force 재계산이 과거 LLM이 붙인 위치 분류를 지우지 않도록 보존.
+                # (룰이 위치 분류를 못 냈는데 기존 행에 있으면 = LLM 또는 과거 룰 결과.
+                #  지우면 다음 LLM 패스가 같은 행을 매일 재호출 → churn + 비용.)
+                if args.force and not (set(cats) & LOCATION_CATS):
+                    keep = [c for c in prev if c in LOCATION_CATS]
+                    cats = cats + [c for c in keep if c not in cats]
+
+                # 위치성 카테고리(전원/도심/농가/별장) 미분류 + 단독·다가구 + LLM 활성
+                # → Gemini 보강. (whole_building은 위치성이 아니라서 트리거 판단에서 제외 —
+                #    통건물만 붙은 매물도 위치 분류는 여전히 비어있는 것.)
+                if (not (set(cats) & LOCATION_CATS) and classifier is not None
                         and r.get("usage_nm") in SINGLE_HOUSE_USG_NMS):
                     # dspslGdsRmk 단건 lazy fetch (jsonb path 단건은 timeout 없음)
                     try:
@@ -787,12 +801,14 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                         sd_name=sd_name, sgg_name=sgg_name or "", dspslGdsRmk=rmk,
                     )
                     n_llm_called += 1
-                    cats = llm_out.get("categories") or []
-                    if cats:
+                    llm_cats = llm_out.get("categories") or []
+                    if llm_cats:
+                        # 룰 결과(whole_building 등)에 LLM 위치 분류를 병합 — 덮어쓰면
+                        # 룰이 붙인 통건물이 사라짐.
+                        cats = cats + [c for c in llm_cats if c not in cats]
                         via_llm = True
                         n_llm_updated += 1
 
-                prev = r.get("derived_category") or []
                 if sorted(prev) == sorted(cats):
                     continue  # 변경 없음
 

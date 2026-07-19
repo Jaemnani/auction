@@ -231,12 +231,16 @@ SALES_TO="$(/bin/date +%Y%m%d)"
 step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
   --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
-# 9) 파생 카테고리 (전원주택/도심단독/농가/별장) — 신규 단독·다가구 매물 자동 분류.
-#    GEMINI_API_KEY 있으면 룰 미분류 매물에 Gemini Flash Lite 보강 (매물당 ~$0.00004).
+# 9) 파생 카테고리 (통건물/전원주택/도심단독/농가/별장).
+#    룰 패스는 매일 전량 재계산(--force, DB-only ~1-2분). 증분({}인 행만)은 두 구멍이 있음:
+#    (a) 분류 뒤에 도착하는 입력 — risk_flags(detail 백필)·주소(역지오코딩)가 나중에
+#        채워져도, 이미 카테고리가 붙은 행은 재평가되지 않아 오분류가 영구화됨.
+#    (b) 룰을 개선해도 기존 행에 반영 안 됨 (수동 --force 전까지 구버전 분류 잔존).
+step "backfill-categories (rule, force)" crawler/scripts/ingest.py backfill-categories --force
+#    LLM 위치 보강은 증분 유지(완전 미분류 행만) — 매일 같은 행 재호출 비용 방지.
+#    주의: whole_building만 붙은 행은 {}가 아니어서 LLM 위치보강 대상에서 빠짐 (수용).
 if [ -n "${GEMINI_API_KEY:-}" ]; then
-  step "backfill-categories (rule+LLM)" crawler/scripts/ingest.py backfill-categories --llm
-else
-  step "backfill-categories (rule only)" crawler/scripts/ingest.py backfill-categories
+  step "backfill-categories (LLM incr)" crawler/scripts/ingest.py backfill-categories --llm
 fi
 # (close-aged는 위 3)으로 이동 — detail 백필 백로그에 굶지 않도록 search 직후 실행)
 

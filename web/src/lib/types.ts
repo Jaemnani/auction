@@ -32,7 +32,7 @@ export type Property = {
   usage_mcl_cd: string | null;
   usage_scl_cd: string | null;
   usage_nm: string | null;             // 사이트 한글 용도명 (아파트/오피스텔/단독주택 등 20종)
-  derived_category: string[] | null;   // 파생 카테고리 (country_house/townhouse/farm_house/vacation_home)
+  derived_category: string[] | null;   // 파생 카테고리 (whole_building/country_house/townhouse/farm_house/vacation_home)
   sd_code: string | null;
   sgg_code: string | null;
   emd_code: string | null;
