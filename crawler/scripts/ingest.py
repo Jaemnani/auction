@@ -282,6 +282,12 @@ async def cmd_backfill(args: argparse.Namespace) -> None:
     q = (
         store.sb.table("properties")
         .select("id, maemul_ser, cases!inner(court_code, case_no)")
+        # 종결(soft-delete) 매물 제외 — 죽은 매물에 처리량(건당 수십 초) 낭비 금지
+        .is_("deleted_at", "null")
+        # 매각기일 임박 순 — 처리량이 백로그(수천 건)보다 작으므로 곧 입찰할
+        # 매물부터. 무순서였을 때 D-7 매물 1,887건이 몇 달 뒤 매물과 경쟁했음.
+        .order("sale_date", nullsfirst=False)
+        .order("id")
     )
     if store._incremental:
         # 미수집(detail_synced_at NULL) OR 재수집 요청(stale=재경매 등으로 detail 갱신 필요)

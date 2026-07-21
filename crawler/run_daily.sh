@@ -250,6 +250,14 @@ if [ -n "${GEMINI_API_KEY:-}" ]; then
 fi
 # (close-aged는 위 3)으로 이동 — detail 백필 백로그에 굶지 않도록 search 직후 실행)
 
+# 10) 데이터 헬스 리포트 — 파이프라인 감당 여부 상황판 (백로그 소진 전망·커버리지).
+#     DB-only 수 초. 상황판단용이라 TIME_BUDGET 소진과 무관하게 항상 실행 —
+#     [done]/[warn] 라인이 Discord 다이제스트의 스텝/경고 섹션에 실린다.
+echo ""
+echo "==== $(date -Iseconds) [health-report] ===="
+"$PYTHON" crawler/scripts/health_report.py \
+  || echo "[warn] step 'health-report' exited $? — 리포트 실패 (크롤 결과와 무관)"
+
 # --- 30일 이상 로그 정리 ---
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true
 
