@@ -10,7 +10,7 @@
 #   COURT=B000210         특정 법원만 (기본: 전국)
 #   PAGE_SIZE=50          검색 페이지 크기 (서버 상한)
 #   MAX_PAGES=10          검색 페이지 상한 (기본: 무제한)
-#   DETAIL_LIMIT=500      detail 백필 1회 처리량
+#   DETAIL_ITER_LIMIT=100 detail 백필 drain 1회 호출량 (작아야 시간 상한이 정확히 듦)
 #   DETAIL_MAX_S=3600     detail 백필 step 시간 상한(초). 백로그가 TIME_BUDGET을
 #                         독식해 다운스트림(close-aged/주소/사진) 굶기는 것 방지
 #   PHOTO_LIMIT=1000      사진 적재 1회 처리량
@@ -84,7 +84,7 @@ trap _on_exit EXIT
 COURT="${COURT:-}"
 PAGE_SIZE="${PAGE_SIZE:-50}"
 MAX_PAGES="${MAX_PAGES:-}"
-DETAIL_LIMIT="${DETAIL_LIMIT:-500}"
+# DETAIL_LIMIT(총량 1덩어리)은 폐기 — DETAIL_ITER_LIMIT(드레인 1회 호출량)로 대체
 DETAIL_MAX_S="${DETAIL_MAX_S:-3600}"   # detail 백필 step 상한(초). 백로그가 예산 독식 방지
 PHOTO_LIMIT="${PHOTO_LIMIT:-1000}"
 THUMB_LIMIT="${THUMB_LIMIT:-1000}"
@@ -194,10 +194,21 @@ fi
 #    내부 안전가드: 직전 search가 완주 못했으면 스스로 skip (오삭제 방지).
 step "close-aged" crawler/scripts/ingest.py close-aged --since "$RUN_SINCE_ISO"
 
+# 3.5) 파생 카테고리 룰 재계산 — DB-only ~2분, courtauction 무접촉이라 여기서 실행.
+#      이전엔 맨 끝(9번)이라 detail 드레인이 예산을 먹으면 매일 skip됐음
+#      (실측 2026-07-21: detail 1회분 500건이 5.2h → 이 step 포함 다운스트림 전멸,
+#       신규 매물이 미분류로 쌓이고 룰 개선도 데이터에 미반영).
+#      당일 detail/주소로 얻는 새 입력은 다음날 force 패스가 자동 반영(기존 semantics).
+step "backfill-categories (rule, force)" crawler/scripts/ingest.py backfill-categories --force
+
 # 4) detail 백필 — 신규/재수집 분 drain. DETAIL_MAX_S 상한으로 다운스트림(주소/사진/
 #    카테고리) 예산 확보 (백로그는 다음 실행에 이어서 처리).
+#    1회 호출량은 DETAIL_ITER_LIMIT로 잘게 — cap/budget 체크가 호출 사이에만 걸리므로
+#    한 덩어리가 크면 상한이 무력화됨 (실측: 차단완화 감속 시 건당 ~38s → 500건 1덩어리가
+#    5.2h를 통째로 먹고 TIME_BUDGET 초과). 총량은 MAX_DRAIN_ITERS × 이 값이 상한.
+DETAIL_ITER_LIMIT="${DETAIL_ITER_LIMIT:-100}"
 DRAIN_CAP_S="$DETAIL_MAX_S" drain "backfill-details" crawler/scripts/ingest.py backfill-details \
-  --limit "$DETAIL_LIMIT" ${COURT:+--court "$COURT"}
+  --limit "$DETAIL_ITER_LIMIT" ${COURT:+--court "$COURT"}
 
 # 5) 좌표/주소 후처리 (한 번이면 끝) — 주소는 UX 핵심이라 사진보다 먼저.
 step "backfill-coords" crawler/scripts/ingest.py backfill-coords
@@ -231,12 +242,7 @@ SALES_TO="$(/bin/date +%Y%m%d)"
 step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
   --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
-# 9) 파생 카테고리 (통건물/전원주택/도심단독/농가/별장).
-#    룰 패스는 매일 전량 재계산(--force, DB-only ~1-2분). 증분({}인 행만)은 두 구멍이 있음:
-#    (a) 분류 뒤에 도착하는 입력 — risk_flags(detail 백필)·주소(역지오코딩)가 나중에
-#        채워져도, 이미 카테고리가 붙은 행은 재평가되지 않아 오분류가 영구화됨.
-#    (b) 룰을 개선해도 기존 행에 반영 안 됨 (수동 --force 전까지 구버전 분류 잔존).
-step "backfill-categories (rule, force)" crawler/scripts/ingest.py backfill-categories --force
+# 9) 파생 카테고리 LLM 보강 — 룰 force 패스는 3.5)로 이동(예산 굶김 방지).
 #    LLM 위치 보강은 증분 유지(완전 미분류 행만) — 매일 같은 행 재호출 비용 방지.
 #    주의: whole_building만 붙은 행은 {}가 아니어서 LLM 위치보강 대상에서 빠짐 (수용).
 if [ -n "${GEMINI_API_KEY:-}" ]; then

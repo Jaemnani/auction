@@ -24,7 +24,7 @@ MARKER="# courtauction-daily"        # 우리가 추가한 line을 식별
 # env 변수 prefix 만들기 (있는 것만)
 build_env_prefix() {
   local out=""
-  for v in COURT PAGE_SIZE MAX_PAGES DETAIL_LIMIT PHOTO_LIMIT THUMB_LIMIT \
+  for v in COURT PAGE_SIZE MAX_PAGES DETAIL_ITER_LIMIT PHOTO_LIMIT THUMB_LIMIT \
            MAX_DRAIN_ITERS TIME_BUDGET PHOTOS_PER_PROPERTY SALES_DAYS \
            REVERSE_GEOCODE_LIMIT PYTHON; do
     if [ -n "${!v:-}" ]; then
