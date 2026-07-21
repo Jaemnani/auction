@@ -697,7 +697,7 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
     --force: 기존 derived_category가 있어도 재계산.
     """
     from courtauction.derived_category import (  # noqa: E402
-        derive_categories, SINGLE_HOUSE_USG_NMS,
+        derive_categories, location_excluded, SINGLE_HOUSE_USG_NMS,
     )
 
     classifier = None
@@ -744,7 +744,9 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                 .select(
                     "id, usage_nm, sd_code, sgg_code, conv_addr, road_addr, "
                     "lot_addr, area_summary, building_summary, derived_category, "
-                    "risk_flags"
+                    "risk_flags, "
+                    # 읍·면 판정용 행정동명 — 주소 필드 미백필 행의 fallback 신호
+                    "emd_nm:detail_result->gdsDspslObjctLst->0->>adongEmdNm"
                 )
                 .not_.is_("usage_nm", "null")
                 .order("id")
@@ -776,17 +778,23 @@ async def cmd_backfill_categories(args: argparse.Namespace) -> None:
                 via_llm = False
                 prev = r.get("derived_category") or []
 
+                # 룰이 명시적으로 "주택 아님"(토지-only/지분) 판정한 행은 보존·LLM
+                # 보강 모두 금지 — 아니면 가드로 지운 태그가 매일 되살아난다.
+                loc_banned = location_excluded(r)
+
                 # --force 재계산이 과거 LLM이 붙인 위치 분류를 지우지 않도록 보존.
                 # (룰이 위치 분류를 못 냈는데 기존 행에 있으면 = LLM 또는 과거 룰 결과.
                 #  지우면 다음 LLM 패스가 같은 행을 매일 재호출 → churn + 비용.)
-                if args.force and not (set(cats) & LOCATION_CATS):
+                if (args.force and not loc_banned
+                        and not (set(cats) & LOCATION_CATS)):
                     keep = [c for c in prev if c in LOCATION_CATS]
                     cats = cats + [c for c in keep if c not in cats]
 
-                # 위치성 카테고리(전원/도심/농가/별장) 미분류 + 단독·다가구 + LLM 활성
+                # 위치성 카테고리(전원/시가지/농가/별장) 미분류 + 단독·다가구 + LLM 활성
                 # → Gemini 보강. (whole_building은 위치성이 아니라서 트리거 판단에서 제외 —
                 #    통건물만 붙은 매물도 위치 분류는 여전히 비어있는 것.)
-                if (not (set(cats) & LOCATION_CATS) and classifier is not None
+                if (not (set(cats) & LOCATION_CATS) and not loc_banned
+                        and classifier is not None
                         and r.get("usage_nm") in SINGLE_HOUSE_USG_NMS):
                     # dspslGdsRmk 단건 lazy fetch (jsonb path 단건은 timeout 없음)
                     try:

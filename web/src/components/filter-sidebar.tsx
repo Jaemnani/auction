@@ -48,8 +48,8 @@ const USAGE_NM_GROUPS: Array<{ title: string; items: string[] }> = [
  */
 const DERIVED_OPTIONS: Array<{ code: string; label: string; desc: string }> = [
   { code: "whole_building", label: "통건물", desc: "단독·다가구·근린시설 건물 전체(+대지) 일괄 매각 — 지분매각 제외" },
-  { code: "country_house", label: "전원주택",  desc: "단독·다가구 + 외곽 sgg(군) 또는 전원/농가 키워드" },
-  { code: "townhouse",     label: "도심 단독", desc: "단독·다가구 + 광역시/인구 50만+ 일반시" },
+  { code: "country_house", label: "전원주택",  desc: "단독·다가구 + 군(郡)/읍·면 소재 또는 전원 키워드 — 토지만·지분 제외" },
+  { code: "townhouse",     label: "시가지 단독", desc: "단독·다가구 + 시·광역시 동(洞) 지역 — 토지만·지분 제외" },
   { code: "farm_house",    label: "농가주택",  desc: "단독·다가구 + 농가/축사 키워드" },
   { code: "vacation_home", label: "별장·펜션", desc: "단독·다가구 + 별장/펜션/산장 키워드" },
 ];

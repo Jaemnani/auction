@@ -11,8 +11,9 @@ export const DISABLED_RISK_FLAGS: ReadonlySet<string> = new Set([
   "new_villa",     // 룰 교정(신축 키워드) 후에도 라이브 매칭 0건 — 데이터에 신호 없어 무용
 ]);
 
-// 파생 카테고리 — backfill-categories 완료(2026-06-19, 789행 분류) → 활성화.
-// 검증: townhouse 597 / country_house 191 / farm_house 10 / vacation_home 0.
+// 파생 카테고리 — 2026-07-21 룰 개편(토지-only·지분 가드, 읍면=전원·그외 시가지
+// 전량 커버) 후 backfill --force 재분류 완료.
+// 검증: whole_building 595 / townhouse 331 / country_house 213 / farm_house 3.
 
 /** 파생 카테고리 필터 활성 여부. */
 export const DERIVED_FILTER_ENABLED = true;
