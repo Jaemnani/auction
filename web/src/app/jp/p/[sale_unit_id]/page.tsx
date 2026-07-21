@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase, publicStorageUrl, JP_PHOTO_BUCKET } from "@/lib/supabase";
 import { ExportButtons } from "@/components/export-buttons";
+import { PropertyPhotos } from "@/components/property-photos";
 import { buildJpMarkdown } from "@/lib/jp-markdown";
 
 export const revalidate = 300;
@@ -218,14 +219,12 @@ export default async function JpDetailPage({
                 사진 없음
               </div>
             ) : (
-              <div className="space-y-2">
-                {photoUrls.map((url, i) => (
-                  <a key={url + i} href={url} target="_blank" rel="noopener noreferrer">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={`物件写真 ${i + 1}`} className="w-full rounded-md border" />
-                  </a>
-                ))}
-              </div>
+              <PropertyPhotos
+                photos={photoUrls.map((url, i) => ({ seq: i + 1, kind: "", desc: `物件写真 ${i + 1}`, url }))}
+                countLabel={`写真 ${photoUrls.length}枚`}
+                closeLabel="閉じる"
+                gridClassName="grid-cols-2"
+              />
             )}
             <p className="text-caption-xs text-muted-foreground mt-2">
               {ownPhotos.length > 0
