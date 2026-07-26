@@ -11,6 +11,7 @@ import {
   makePin,
 } from "@/lib/google-maps";
 import { MapKeyNotice } from "@/components/map-key-notice";
+import { MapSearchBox } from "@/components/map-search-box";
 
 // 지도 시작 위치 — 도쿄都庁. 일본 매물의 대부분이 関東권에 집중 → 도쿄에서 시작.
 // (이전엔 일본 중심 [138, 36.5] → 첫 화면이 太平洋 위로 보임)
@@ -299,7 +300,18 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
       </div>
 
       {/* 컨트롤 오버레이 */}
-      <div className="absolute top-2 left-2 flex items-center gap-2 z-30">
+      <div className="absolute top-2 left-2 flex flex-wrap items-center gap-2 z-30">
+        {mapReady && (
+          <MapSearchBox
+            region="jp"
+            onLocate={({ location, viewport }) => {
+              const m = mapRef.current;
+              if (!m) return;
+              if (viewport) m.fitBounds(viewport);
+              else { m.panTo(location); m.setZoom(14); }
+            }}
+          />
+        )}
         <div className="rounded-md bg-card/95 backdrop-blur px-3 py-1.5 text-xs border shadow">
           🇯🇵 매물 <strong>{filteredRows.length}</strong>건
           {circle && (

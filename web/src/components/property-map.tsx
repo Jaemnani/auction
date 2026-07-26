@@ -15,6 +15,7 @@ import {
   makePin,
 } from "@/lib/google-maps";
 import { MapKeyNotice } from "@/components/map-key-notice";
+import { MapSearchBox } from "@/components/map-search-box";
 
 /** Haversine distance in meters. */
 function distanceM(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -473,6 +474,17 @@ export function PropertyMap({
 
       {/* 컨트롤 오버레이 — 좌상단 */}
       <div className="absolute left-3 top-3 flex flex-col gap-2 z-30">
+        {mapReady && (
+          <MapSearchBox
+            region="kr"
+            onLocate={({ location, viewport }) => {
+              const m = mapRef.current;
+              if (!m) return;
+              if (viewport) m.fitBounds(viewport);
+              else { m.panTo(location); m.setZoom(15); }
+            }}
+          />
+        )}
         <div className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm">
           마커 <strong>{count.toLocaleString()}</strong>개
           {circle && (
