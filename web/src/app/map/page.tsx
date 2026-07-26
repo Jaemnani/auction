@@ -1,5 +1,6 @@
 import nextDynamic from "next/dynamic";
 import { FilterSidebar } from "@/components/filter-sidebar";
+import { MapFilterOverlay } from "@/components/map-filter-overlay";
 import {
   fetchCourts, fetchPropertiesForMap, fetchSdList, fetchSggList, fetchUsageList,
 } from "@/lib/queries";
@@ -65,17 +66,21 @@ export default async function MapPage(props: PageProps<"/map">) {
   });
 
   return (
-    <div className="space-y-3 min-w-0">
-      <FilterSidebar
-        courts={courts}
-        sdList={sdList}
-        usageLcl={usageLcl}
-        initial={filters}
-      />
-      <div className="text-sm text-muted-foreground">
-        좌표가 있는 매물 <strong>{rows.length}</strong>건 (최대 1,000개 표시 — 더 많으면 필터로 좁히세요)
-      </div>
-      <PropertyMap rows={rows} activeFilters={activeFilters} />
+    // 전체 화면 지도 — layout Container의 px-5/py-6을 음수 마진으로 상쇄하고
+    // 헤더(h-14) 아래 나머지 viewport 전부를 채움. 필터는 우상단 버튼 → 오버레이.
+    <div
+      className="relative -mx-5 -my-6 min-w-0 overflow-hidden"
+      style={{ height: "calc(100vh - 3.5rem)" }}
+    >
+      <PropertyMap rows={rows} activeFilters={activeFilters} fill />
+      <MapFilterOverlay>
+        <FilterSidebar
+          courts={courts}
+          sdList={sdList}
+          usageLcl={usageLcl}
+          initial={filters}
+        />
+      </MapFilterOverlay>
     </div>
   );
 }

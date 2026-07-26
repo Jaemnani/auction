@@ -66,9 +66,13 @@ type Props = {
    *  사용자가 어떤 필터가 적용 중인지 즉시 인식 가능 (특히 "lcl 필터 안 켰는데
    *  건물만 보고 싶었다" 같은 UX 오해 방지). */
   activeFilters?: ActiveFilter[];
+  /** true면 부모 높이를 100% 채움 (전체 화면 지도) — 필터 칩은 오버레이로 전환 */
+  fill?: boolean;
 };
 
-export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilters = [] }: Props) {
+export function PropertyMap({
+  rows: initialRows, autoRefresh = false, activeFilters = [], fill = false,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -389,27 +393,36 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
     return <MapKeyNotice error={mapError} className="h-[480px]" />;
   }
 
+  const filterChips = activeFilters.length > 0 && (
+    <div className={
+      fill
+        ? "absolute bottom-3 right-3 z-30 flex flex-wrap items-center justify-end gap-1.5 max-w-[60%]"
+        : "mb-2 flex flex-wrap items-center gap-1.5"
+    }>
+      <span className={"text-xs text-muted-foreground" + (fill ? " bg-background/80 rounded px-1" : "")}>필터:</span>
+      {activeFilters.map((f, i) => (
+        <span key={i}
+              className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs shadow-sm">
+          <span className="text-muted-foreground">{f.label}</span>
+          <span className="font-medium">{f.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="relative">
-      {/* 활성 필터 칩 — 지도 상단 (사용자가 어떤 필터로 좁혔는지 즉시 보임) */}
-      {activeFilters.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">필터:</span>
-          {activeFilters.map((f, i) => (
-            <span key={i}
-                  className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
-              <span className="text-muted-foreground">{f.label}</span>
-              <span className="font-medium">{f.value}</span>
-            </span>
-          ))}
-        </div>
-      )}
+    <div className={fill ? "relative h-full" : "relative"}>
+      {/* 활성 필터 칩 — 일반 모드는 지도 상단 플로우, fill 모드는 우하단 오버레이 */}
+      {!fill && filterChips}
 
       <div
         ref={containerRef}
-        style={{ width: "100%", height: "calc(100vh - 280px)", minHeight: 480 }}
-        className="rounded-md border bg-muted/20 overflow-hidden"
+        style={fill
+          ? { width: "100%", height: "100%" }
+          : { width: "100%", height: "calc(100vh - 280px)", minHeight: 480 }}
+        className={fill ? "bg-muted/20 overflow-hidden" : "rounded-md border bg-muted/20 overflow-hidden"}
       />
+      {fill && filterChips}
 
       {/* 마커 색 legend — 좌하단 (lcl 필터 적용 안 한 상태에서도 한눈에 구분) */}
       <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-caption-sm shadow-sm space-y-0.5">
