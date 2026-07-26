@@ -1,0 +1,97 @@
+---
+인수인계 메모 — auction 낙찰 관리 파이프라인 (2026-07-27)
+
+오늘까지 한 것 (모두 main에 푸시됨 — git pull 필수)
+
+- DB 마이그레이션 0018~0022 적용 완료 (NAS psql로 적용됨):
+  - 0018: properties.final_result/sold_amount/sold_date/finalized_at + finalize_sold_properties() RPC + RLS 30일 유예(낙찰 매물은 soft-delete 후 30일간 웹 노출)
+  - 0019: sale_archive view(지역 과거 낙찰 사례) + 핫픽스: sale_results.usage_nm 컬럼 추가 — 이 컬럼이 없어서 sales-results 적재가 매일 PGRST204로 전체 실패했었음(테이블 0건이었음). 수정 후 정상 적재 확인됨
+  - 0020/0021: molit_deals(국토부 실거래가) + property_building_register(건축물대장) — crawler/scripts/molit_ingest.py가 수집
+  - 0022: property_estimates(낙찰 예상가) + molit_price_by_region view — crawler/scripts/estimate.py train/evaluate/predict
+- 크롤러: ingest.py finalize-sold 서브커맨드 신설, run_daily.sh에 finalize-sold·molit-deals·building-register·estimate-predict 스텝 추가, install_cron.sh에 주 1회 모델 학습 크론 추가, 부활(재매각) 시 sold 필드 클리어
+- 파생 카테고리 버그 픽스: location_excluded()에 집합건물 가드 추가(다세대 호수가 usage_nm=단독주택 오표기로 시가지단독에 노출되던 것) — backfill-categories --force 재분류 완료
+- 웹: /sold 최근 낙찰 탭, 목록·상세 낙찰 배지/배너, 지도 낙찰 파란 마커, 전체 화면 지도+플로팅 필터, 위치 검색(Geocoder), 청구금액 표시, 상세 링크 새 창, 분류 필터 3종 제거(재설계 예정)
+
+이 머신(ohyeahdani_m1)에서 돌고 있는 것
+
+- tmux 세션 auction-backfill: sales-results 90일 백필 → finalize-sold → molit deals/building-register → estimate train/evaluate/predict 체인. 어제 확인 시점에 sale_results ~6,000건(낙찰 3,108) 적재 중이었음.
+- 로그: crawler/data/logs/backfill_*.log
+
+남은 확인/작업 체크리스트
+
+1. tmux attach -t auction-backfill 또는 로그로 체인 완료 여부 확인. IP 차단(exit 75)으로 중단됐으면 같은 tmux 명령 재실행(이어서 적재됨, 중복 없음)
+2. cd ~/workspace/auction && git pull — 오늘 픽스 반영 (일일 크론이 새 코드를 쓰도록)
+3. estimate 단계 실패했으면: brew install libomp && /Users/ohyeahdani_m1/workspace/venv_common/bin/pip install lightgbm pandas scikit-learn 후 estimate.py train && evaluate && predict 재실행
+4. finalize-sold 결과 확인: [done] finalized N 건수 — N>0이면 웹 /sold 페이지와 지도 파란 마커에 낙찰 매물이 보여야 함
+5. evaluate 출력의 가율 MAE가 베이스라인(지역 평균)보다 낮은지 확인
+6. cd crawler && ./install_cron.sh && ./install_cron.sh show — 주간 학습 크론 포함 재등록
+7. 이 머신 잠자기 꺼두기 (잠들면 cron/tmux 정지)
+
+주의사항
+
+- uuid .in_() PostgREST 쿼리는 150개 초과 시 NAS nginx 414 — 항상 150 chunk
+- usage_nm(법원 분류)은 오표기 있음 — 매물 성격 판정은 conv_addr의 [집합건물/[건물/[토지 마커가 진실. 파생 분류 가드는 반드시 derived_category.py의 location_excluded()에만 추가하고, 룰 변경 후 backfill-categories --force
+- data.go.kr 일일 쿼터: molit deals는 MOLIT_DAILY_BUDGET(기본 900콜)로 제한됨
+
+---
+메모는 채팅에서 복사해 쓰시면 되고, 원하시면 그 머신에서 git pull 후 새 세션에 "인수인계 메모 읽고 체크리스트 진행해줘"라고 붙여넣기만 하면 이어집니다.
+
+================================================================================
+추가 작업 — 매수 안전도 점수 + UI (2026-07-27 밤 세션, 모두 main에 푸시됨)
+================================================================================
+
+■ 완료한 것
+
+1) 지도 UI
+   - 마커 색 범례를 클릭 토글로 전환 — 켠 분류만 지도에 렌더. 기본은 '건물(20000)'만 ON,
+     나머지(토지/차량/기타/미분류/낙찰) OFF. (web/src/components/property-map.tsx)
+   - 빈 지도(마커 외) 클릭 시 열린 상세 InfoWindow 닫힘.
+   - 팝업 카드 세련화: 할인율 배지(▼N%)/낙찰 배지, 감정가 취소선 병기, 매각기일 D-day,
+     구분선, 버튼형 상세 링크, + 매수 안전도 칩.
+
+2) 매수 안전도 점수 (Phase 1) — 가격 제외, 위험성 기반 0~100 (100=안전)
+   철학: 규칙 기반 투명 가중 감점. 100에서 risk_flags(0011) 25종을 tier(danger/warn/info)별
+   감점 + 물건유형(집합건물/건물/토지)·건물연식 보정. detail 미동기는 신뢰도 low + 상한 65.
+   가격(할인·예상낙찰가)은 property_estimates(0022) 모델이 별도 담당 → 점수엔 미포함.
+   - supabase/migrations/0023_property_scores.sql
+       property_scores(score/confidence/breakdown) 테이블 + RLS
+       properties.safety_score 미러 컬럼(정렬/필터 인덱스) + sync_safety_scores() RPC
+   - crawler/src/scorer/rules.py  ← 가중치는 여기 FLAG_META 에서 조정 (순수함수, 테스트 있음)
+   - crawler/scripts/score.py run  ← 활성 매물 배치 채점 → property_scores upsert + safety_score 동기화
+   - run_daily.sh: estimate-predict 직후 'safety-score' 스텝 추가 (DB-only 수 초)
+   - crawler/tests/test_scorer.py  ← 단위 테스트 15종 (python -m unittest tests.test_scorer)
+   - health_report.py: [점수] 커버리지 라인 추가
+   - 웹: ScoreBadge(목록·지도)·ScoreCard(상세, 감점요인 칩), 안전도순 정렬 + 최소 안전도 필터.
+     점수 조회는 별도 attach + try/catch degrade → 0023 미적용/배포 시차에도 목록·지도 안 깨짐.
+
+■ ★이 머신(NAS)에서 실행해야 할 것★  (안 하면 웹에 점수 안 뜸)
+
+   1. 마이그레이션 적용:
+      docker exec -i auction-db psql -U postgres -d postgres < supabase/migrations/0023_property_scores.sql
+   2. 최신 코드:  cd ~/workspace/auction && git pull
+   3. 최초 1회 채점 (이후 일일 크론이 자동):
+      /Users/ohyeahdani_m1/workspace/venv_common/bin/python crawler/scripts/score.py run
+      (먼저 --dry-run 으로 점수 분포만 확인 가능)
+   4. 확인: 웹 목록·지도·상세에 안전도 배지, health_report [점수] 라인, "안전도순" 정렬 동작.
+   * 웹(Vercel)은 push 시 자동 배포됨 — 위 1~3 전에도 사이트는 안 깨지고, 점수만 미표시.
+
+■ 다음 할 일 (Phase 2 — 호재/토지, 확정된 계획)
+
+   표기 방식=단일 안전도 점수 + 호재 배지, 가중치=균형, 순서=Phase1 먼저(완료) 로 합의됨.
+   - 입지 호재 토글 (지도 토글 UI 확장, 외부 API 쿼터 0 — PostGIS만):
+       * 지하철 근접  * 학군(초/중/고 근접) ← 사용자가 on/off 토글로 요청  * 공원/하천
+       전국 좌표셋 1회 적재(subway_stations 등) → ST_DWithin 로 매물별 최근접 거리 계산.
+       properties.location(geography, 4326) 이미 있음. 개통예정(GTX 등)은 별도 소스=후순위.
+   - data.go.kr 토지이용계획확인 API (재개발 zoning + 토지 건축가능성):
+       property_zoning 테이블 신설(건축대장과 동일 패턴, 지번 단위, ~100~150콜/일 — molit
+       900콜/일과 합쳐 쿼터 확인 필요). 용도지역→건폐율/용적률 lookup→최대 건축면적·연면적·
+       추정층수, 지목/맹지/규제구역→건축 가부·난이도. 토지 상세창에 "건축 가능성" 카드.
+   - 명도 용이성 호재: 기존 detail(임차인 현황)+risk_flags 로 파생 (신규 수집 불필요).
+   - 점수에 호재 가산(상한 +0~15) + 🚇🏫🏗 배지. 가중치 튜닝은 rules.py FLAG_META.
+   - (참고) 낙찰 결과가 충분히 쌓이면 규칙기반→ML 채점 재검토.
+
+■ 주의 (이번 작업 관련)
+   - score.py/health_report 의 property_scores·safety_score 접근은 0023 미적용 시 경고만 내고
+     넘어가도록 방어돼 있음(파이프라인 안 죽음).
+   - 스코어러 가중치·라벨은 crawler/src/scorer/rules.py 의 FLAG_META 한 곳. 웹 표시 라벨은
+     breakdown.top_factors 로 내려오므로 별도 동기화 불필요(웹 score-badge.tsx 는 색만).
