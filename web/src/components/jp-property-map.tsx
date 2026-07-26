@@ -163,7 +163,7 @@ export function JpPropertyMap({ rows }: Props) {
         <span style="display:inline-block;background:#fed7aa;color:#7c2d12;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
         <span style="font-family:monospace;margin-left:6px;font-weight:600">${fmtJpy(r.sale_standard_price)}</span>
       </div>
-      <a href="/jp/p/${r.sale_unit_id}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>`;
+      <a href="/jp/p/${r.sale_unit_id}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>`;
 
     for (const gr of groups) {
       const r0 = gr[0];

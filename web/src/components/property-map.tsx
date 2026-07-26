@@ -334,7 +334,7 @@ export function PropertyMap({
         ${subAddr}
         ${buildingNote}
         ${priceLine}
-        ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
+        ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
     };
 
     // 좌표별로 묶어 겹침을 처리 (겹치면 개수 배지 + 선택 목록 팝업).

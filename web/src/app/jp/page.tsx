@@ -276,7 +276,7 @@ export default async function JpListingPage(props: {
                   return (
                     <TableRow key={r.sale_unit_id} className="hover:bg-muted/40">
                       <TableCell className="w-[80px]">
-                        <Link href={`/jp/p/${r.sale_unit_id}`}>
+                        <Link href={`/jp/p/${r.sale_unit_id}`} target="_blank" rel="noopener noreferrer">
                           {thumb ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={thumb} alt="" className="w-16 h-12 object-cover rounded border" />
@@ -286,7 +286,7 @@ export default async function JpListingPage(props: {
                         </Link>
                       </TableCell>
                       <TableCell className="text-xs">
-                        <Link href={`/jp/p/${r.sale_unit_id}`} className="text-primary hover:underline font-mono block">
+                        <Link href={`/jp/p/${r.sale_unit_id}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-mono block">
                           {caseNo}
                         </Link>
                         <span className="text-muted-foreground">{courtName}</span>

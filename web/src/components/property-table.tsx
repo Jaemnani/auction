@@ -50,7 +50,8 @@ function PropertyRow({ r, usageNames, eager = false }: {
   const href = r.docid ? `/p/${encodeURIComponent(r.docid)}` : undefined;
   const Wrapper = ({ children }: React.PropsWithChildren) =>
     href
-      ? <Link href={href} className="block">{children}</Link>
+      // 상세는 항상 새 창 — 목록의 필터/페이지 상태를 잃지 않게
+      ? <Link href={href} target="_blank" rel="noopener noreferrer" className="block">{children}</Link>
       : <>{children}</>;
 
   return (
