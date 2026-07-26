@@ -128,6 +128,9 @@ function PropertyRow({ r, usageNames, eager = false }: {
                   : "text-foreground";
                 return <span className={`text-caption-xs font-mono ${cls}`}>{fmtDDay(d)}</span>;
               })()}
+              {r.cases?.claim_amount != null && r.cases.claim_amount > 0 && (
+                <span>청구: <span className="font-mono">{fmtMoneyShort(r.cases.claim_amount)}</span></span>
+              )}
               {r.fail_count != null && r.fail_count > 0 && (
                 <Badge variant="secondary" className="text-caption-xs font-mono">유찰 {r.fail_count}</Badge>
               )}

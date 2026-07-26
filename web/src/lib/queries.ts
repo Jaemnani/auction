@@ -13,6 +13,7 @@ const LIST_PROPERTY_SELECT = `
   building_summary, area_summary, longitude, latitude, detail_synced_at,
   final_result, sold_amount, sold_date, deleted_at,
   cases:case_id!inner ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
+                  claim_amount,
                   courts:court_code ( code, name ) ),
   property_photos ( seq, storage_path )
 `;
@@ -25,7 +26,7 @@ const MAP_PROPERTY_SELECT = `
   id, docid, maemul_ser, appraisal_amount, min_sale_price, fail_count,
   sale_date, usage_lcl_cd, conv_addr, road_addr, lot_addr, building_summary,
   longitude, latitude, final_result, sold_amount, sold_date,
-  cases:case_id!inner ( case_no )
+  cases:case_id!inner ( case_no, claim_amount )
 `;
 
 export type PropertyListResult = {

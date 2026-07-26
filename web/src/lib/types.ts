@@ -69,6 +69,7 @@ export type Property = {
     jdbn_name: string | null;
     is_real_estate: boolean | null;
     receipt_date: string | null;
+    claim_amount?: number | null;  // 청구금액 — 목록·지도 select에 포함
     courts: { code: string; name: string } | null;
   } | null;
 };

@@ -328,6 +328,7 @@ export function PropertyMap({
         ? `<div style="margin-top:4px"><span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;margin-right:4px">낙찰</span>낙찰가: <strong style="color:#2563eb">${escapeHtml(fmtMoneyShort(p.sold_amount ?? null))}</strong></div>
         <div style="color:#71717a">낙찰일: ${escapeHtml(fmtDate(p.sold_date ?? null))}</div>`
         : `<div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
+        ${p.cases?.claim_amount ? `<div style="color:#71717a">청구: ${escapeHtml(fmtMoneyShort(p.cases.claim_amount))}</div>` : ""}
         <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>`;
       return `
         <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
