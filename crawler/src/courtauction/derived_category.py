@@ -69,6 +69,11 @@ def location_excluded(prop: dict) -> bool:
     주택 매각이 아니다 (라이브 실측: 전원주택 태깅의 32%가 토지-only,
     17%가 지분 — 묘지 지분까지 전원주택으로 노출됐음).
 
+    집합건물(구분소유 호수 매각)도 제외 — courtauction이 다세대 호수에
+    usage_nm='단독주택'을 붙이는 오표기가 있어(실측: 은평구 5층501호 다세대가
+    시가지단독으로 노출) conv_addr의 "[집합건물 ...]" 표기로 직접 걸러야 함.
+    whole_building 룰과 동일한 마커.
+
     ingest의 --force LLM-보존 로직과 LLM 보강 트리거도 이 판정을 존중해야
     함 — 아니면 룰이 지운 태그를 보존/재부여해 되살린다.
     """
@@ -77,7 +82,11 @@ def location_excluded(prop: dict) -> bool:
         prop.get("building_summary"),
     ]))
     risk = prop.get("risk_flags") or []
-    return _share_sale_text(text, risk) or _land_only_text(text)
+    return (
+        _share_sale_text(text, risk)
+        or _land_only_text(text)
+        or "집합건물" in text
+    )
 
 
 def _is_rural(
@@ -172,8 +181,8 @@ def derive_categories(
 # 알려진 모든 derived 카테고리 코드 (UI 토글 옵션·검증용)
 ALL_CATEGORIES: list[dict] = [
     {"code": "whole_building", "label": "통건물", "desc": "단독·다가구·근린시설 건물 전체(+대지) 일괄 매각 — 지분매각 제외"},
-    {"code": "country_house", "label": "전원주택", "desc": "단독·다가구 + 군(郡)/읍·면 소재 또는 전원 키워드 — 토지-only·지분 제외"},
-    {"code": "townhouse",     "label": "시가지 단독", "desc": "단독·다가구 + 시·광역시 동(洞) 지역 — 토지-only·지분 제외"},
+    {"code": "country_house", "label": "전원주택", "desc": "단독·다가구 + 군(郡)/읍·면 소재 또는 전원 키워드 — 토지-only·지분·집합건물 제외"},
+    {"code": "townhouse",     "label": "시가지 단독", "desc": "단독·다가구 + 시·광역시 동(洞) 지역 — 토지-only·지분·집합건물 제외"},
     {"code": "farm_house",    "label": "농가주택",  "desc": "단독·다가구 + 농가/축사 키워드"},
     {"code": "vacation_home", "label": "별장·펜션", "desc": "단독·다가구 + 별장/펜션/산장 키워드"},
 ]
