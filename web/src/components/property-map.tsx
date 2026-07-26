@@ -52,10 +52,26 @@ const LCL_UNKNOWN = { color: "#525252", label: "미분류" }; // neutral-600
 // 목록/상세의 낙찰 배지(blue-600)와 통일.
 const SOLD = { color: "#2563eb", label: "최근 낙찰 (30일)" };
 
+/** 마커가 속한 토글 분류 키 — legend 토글과 1:1. markerColor와 같은 우선순위. */
+function markerKey(p: Property): string {
+  if (p.final_result === "sold") return "sold";
+  if (p.usage_lcl_cd && LCL_COLORS[p.usage_lcl_cd]) return p.usage_lcl_cd;
+  return "unknown";
+}
+
 function markerColor(p: Property): string {
   if (p.final_result === "sold") return SOLD.color;
   return (p.usage_lcl_cd && LCL_COLORS[p.usage_lcl_cd]?.color) || LCL_UNKNOWN.color;
 }
+
+// legend = 마커 색 토글 목록. markerKey가 낼 수 있는 모든 분류를 나열.
+const LEGEND_ITEMS: { key: string; color: string; label: string }[] = [
+  ...Object.entries(LCL_COLORS).map(([key, v]) => ({ key, ...v })),
+  { key: "unknown", ...LCL_UNKNOWN },
+  { key: "sold", ...SOLD },
+];
+// 기본 표시 분류 — 건물(20000)만 켜고 나머지는 꺼둠.
+const DEFAULT_ENABLED_KEYS = ["20000"];
 
 export type ActiveFilter = { label: string; value: string };
 
@@ -97,6 +113,18 @@ export function PropertyMap({
   const [drawMode, setDrawMode] = useState(false);
   const [circle, setCircle] = useState<CircleSel>(null);
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // 마커 색 토글 — 켜진 분류만 지도에 그림. 기본은 건물만.
+  const [enabledKeys, setEnabledKeys] = useState<Set<string>>(
+    () => new Set(DEFAULT_ENABLED_KEYS),
+  );
+  const toggleKey = useCallback((key: string) => {
+    setEnabledKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   // initialRows가 props로 갱신되면 (필터 변경 시) 동기화
   useEffect(() => {
@@ -115,10 +143,24 @@ export function PropertyMap({
     },
     [rows, circle],
   );
-  const pointsKey = useMemo(
-    () => points.map((p) => p.id).join(","),
-    [points],
+  // 켜진 토글 분류만 남긴 실제 렌더 대상.
+  const visiblePoints = useMemo(
+    () => points.filter((p) => enabledKeys.has(markerKey(p))),
+    [points, enabledKeys],
   );
+  const visiblePointsKey = useMemo(
+    () => visiblePoints.map((p) => p.id).join(","),
+    [visiblePoints],
+  );
+  // 분류별 개수 — legend에 표시 (현재 viewport 기준).
+  const typeCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const p of points) {
+      const k = markerKey(p);
+      m[k] = (m[k] ?? 0) + 1;
+    }
+    return m;
+  }, [points]);
 
   // 원 적용/해제 시 표시 count 동기화
   useEffect(() => {
@@ -310,7 +352,7 @@ export function PropertyMap({
     markersRef.current = [];
     infoWindowRef.current?.close();
 
-    if (points.length === 0) return;
+    if (visiblePoints.length === 0) return;
 
     // 한 매물의 팝업 카드 HTML (겹침 시 목록의 한 항목으로도 재사용).
     const cardHtml = (p: Property) => {
@@ -340,7 +382,7 @@ export function PropertyMap({
     };
 
     // 좌표별로 묶어 겹침을 처리 (겹치면 개수 배지 + 선택 목록 팝업).
-    for (const grp of groupByCoord(points, (p) => p.longitude!, (p) => p.latitude!)) {
+    for (const grp of groupByCoord(visiblePoints, (p) => p.longitude!, (p) => p.latitude!)) {
       const p0 = grp[0];
       const lng = p0.longitude!, lat = p0.latitude!;
 
@@ -378,18 +420,8 @@ export function PropertyMap({
     // initialRows 변경 시 (필터 변경 등) 마커 영역으로 줌은 하지 않음
     // bbox refresh로 들어온 새 rows에도 fit 안 함 (사용자 viewport 유지)
     // unit 변경 시에도 popup 재생성 — popup HTML이 unit에 의존
-  }, [pointsKey, unit, mapReady]);
-
-  // 어떤 lcl이 결과에 존재하는지 — legend에서 해당 항목만 굵게 강조
-  const presentLcls = useMemo(() => {
-    const s = new Set<string>();
-    for (const p of points) if (p.usage_lcl_cd) s.add(p.usage_lcl_cd);
-    return s;
-  }, [points]);
-  const presentSold = useMemo(
-    () => points.some((p) => p.final_result === "sold"),
-    [points],
-  );
+    // 토글 변경(visiblePoints) 시에도 재생성 — 꺼진 분류 마커 제거
+  }, [visiblePointsKey, unit, mapReady]);
 
   if (!GOOGLE_MAPS_API_KEY || mapError) {
     return <MapKeyNotice error={mapError} className="h-[480px]" />;
@@ -426,25 +458,40 @@ export function PropertyMap({
       />
       {fill && filterChips}
 
-      {/* 마커 색 legend — 좌하단 (lcl 필터 적용 안 한 상태에서도 한눈에 구분) */}
+      {/* 마커 색 legend = 표시 토글 — 좌하단. 켠 분류만 지도에 그림(기본 건물만). */}
       <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-caption-sm shadow-sm space-y-0.5">
         <div className="text-muted-foreground font-medium text-caption-xs uppercase tracking-wide mb-0.5">
-          마커 색
+          마커 색 · 클릭 토글
         </div>
-        {Object.entries(LCL_COLORS).map(([code, { color, label }]) => (
-          <div key={code} className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
-            <span className={presentLcls.has(code) ? "font-medium" : "text-muted-foreground"}>
-              {label}
-            </span>
-          </div>
-        ))}
-        <div className="flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: SOLD.color }} />
-          <span className={presentSold ? "font-medium" : "text-muted-foreground"}>
-            {SOLD.label}
-          </span>
-        </div>
+        {LEGEND_ITEMS.map(({ key, color, label }) => {
+          const on = enabledKeys.has(key);
+          const n = typeCounts[key] ?? 0;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleKey(key)}
+              aria-pressed={on}
+              className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+            >
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                style={{
+                  background: on ? color : "transparent",
+                  border: `1.5px solid ${color}`,
+                }}
+              />
+              <span className={on ? "font-medium" : "text-muted-foreground line-through"}>
+                {label}
+              </span>
+              {n > 0 && (
+                <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
+                  {n.toLocaleString()}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}
@@ -487,7 +534,10 @@ export function PropertyMap({
           />
         )}
         <div className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm">
-          마커 <strong>{count.toLocaleString()}</strong>개
+          마커 <strong>{visiblePoints.length.toLocaleString()}</strong>개
+          {visiblePoints.length < count && (
+            <span className="text-muted-foreground ml-1">/ 전체 {count.toLocaleString()}</span>
+          )}
           {circle && (
             <span className="text-muted-foreground ml-1">
               (반경 {(circle.radiusM / 1000).toFixed(1)}km)
