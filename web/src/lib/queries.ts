@@ -12,6 +12,7 @@ const LIST_PROPERTY_SELECT = `
   usage_lcl_cd, usage_mcl_cd, usage_scl_cd, usage_nm, derived_category,
   sd_code, sgg_code, emd_code, conv_addr, road_addr, lot_addr,
   building_summary, area_summary, longitude, latitude, detail_synced_at,
+  final_result, sold_amount, sold_date, deleted_at,
   cases:case_id!inner ( id, court_code, case_no, case_name, jdbn_name, is_real_estate, receipt_date,
                   courts:court_code ( code, name ) ),
   property_photos ( seq, storage_path )
@@ -68,7 +69,8 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   if (filters.sale_from) q = q.gte("sale_date", filters.sale_from);
   if (filters.sale_to)   q = q.lte("sale_date", filters.sale_to);
 
-  if (filters.upcoming_only) {
+  if (filters.upcoming_only && filters.status !== "sold_only") {
+    // sold_only 는 매각기일이 전부 과거라 upcoming 필터가 결과를 전멸시킴 — 무시.
     const today = new Date().toISOString().slice(0, 10);
     q = q.gte("sale_date", today);
   }
@@ -128,6 +130,19 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   return q;
 }
 
+// 낙찰 노출 모드 (0018) — RLS가 "삭제 30일 이내 sold"까지만 열어주므로 여기 날짜
+// 계산이 다소 어긋나도 만료 매물이 새어나오지는 않음 (이중 방어).
+function applyStatus(q: FilterableQuery, status: PropertyFilters["status"]): FilterableQuery {
+  if (status === "sold_only") {
+    return q.eq("final_result", "sold").not("deleted_at", "is", null);
+  }
+  if (status === "with_sold") {
+    const cutoff = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+    return q.or(`deleted_at.is.null,and(final_result.eq.sold,deleted_at.gte.${cutoff})`);
+  }
+  return q.is("deleted_at", null);  // 기본: 진행중만
+}
+
 export async function fetchProperties(
   filters: PropertyFilters,
 ): Promise<PropertyListResult> {
@@ -139,12 +154,12 @@ export async function fetchProperties(
   let q: FilterableQuery = supabase
     .from("properties")
     .select(LIST_PROPERTY_SELECT, { count: "exact" })
-    .is("deleted_at", null)
     // 썸네일은 최소 seq 1장만 필요 — 임베드 photos를 1건으로 제한 (전체 조인 방지).
     // storage_path 있는 것만 — 첫 사진이 아직 미업로드면 다음 업로드된 걸로 폴백.
     .not("property_photos.storage_path", "is", null)
     .order("seq", { referencedTable: "property_photos", ascending: true })
     .limit(1, { referencedTable: "property_photos" });
+  q = applyStatus(q, filters.status);
   q = applyFilters(q, filters);
 
   // 정렬 — 사용자가 컬럼별 오름/내림 선택. discount는 min_sale_price 대리(낮을수록 할인 큼).
@@ -170,7 +185,12 @@ export async function fetchProperties(
       q = q.order("sale_rate_pct", { ascending: false, nullsFirst: false }); break;
     case "sale_date":
     default:
-      q = q.order("sale_date", { ascending: true, nullsFirst: false });
+      // 낙찰만 보기는 "최근 낙찰"이 기본 — 낙찰일 내림차순
+      if (filters.status === "sold_only") {
+        q = q.order("sold_date", { ascending: false, nullsFirst: false });
+      } else {
+        q = q.order("sale_date", { ascending: true, nullsFirst: false });
+      }
   }
 
   q = q.range(from, to);
@@ -198,6 +218,7 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
     usage_lcl_cd, usage_mcl_cd, usage_scl_cd,
     sd_code, sgg_code, emd_code, lot_no, conv_addr, road_addr, lot_addr,
     building_summary, area_summary, longitude, latitude, detail_synced_at,
+    final_result, sold_amount, sold_date, deleted_at,
     rmk:detail_result->dspslGdsDxdyInfo->>dspslGdsRmk,
     spc_rmk:detail_result->dspslGdsDxdyInfo->>gdsSpcfcRmk,
     dpos_rate:detail_result->dspslGdsDxdyInfo->>prchDposRate,
@@ -331,6 +352,85 @@ export async function fetchRegionStats(
     return (fb.data?.[0] as AuctionStat) ?? null;
   }
   return (data as AuctionStat) ?? null;
+}
+
+// 낙찰 예상가 — property_estimates (0022). 크롤러 배치 예측(estimate.py predict) 결과.
+export type PropertyEstimate = {
+  property_id: string;
+  estimated_price: number | null;
+  estimated_low: number | null;
+  estimated_high: number | null;
+  estimated_rate_pct: number | null;
+  method: "model" | "region_avg";
+  model_version: string | null;
+  sample_count: number | null;
+  features_used: Record<string, boolean> | null;
+  predicted_at: string;
+};
+
+export async function fetchEstimate(propertyId: string): Promise<PropertyEstimate | null> {
+  const { data, error } = await supabase
+    .from("property_estimates")
+    .select("*")
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (error) return null;  // 0022 미적용 등 — 카드 자체를 숨김
+  return (data as PropertyEstimate) ?? null;
+}
+
+// 지역 과거 낙찰 사례 — sale_archive view (0019). RLS 유예창과 무관하게 영구 조회 가능.
+export type SaleCase = {
+  docid: string | null;
+  case_no: string;
+  maemul_ser: number;
+  appraisal_amount: number | null;
+  min_sale_price: number | null;
+  sale_amount: number;
+  fail_count: number | null;
+  bidder_count: number | null;
+  sale_date: string | null;
+  sale_rate_pct: number | null;
+  usage_nm: string | null;
+  conv_addr: string | null;
+  road_addr: string | null;
+  lot_addr: string | null;
+  area_summary: string | null;
+};
+
+export async function fetchRegionalSaleCases(opts: {
+  sd_code: string | null | undefined;
+  sgg_code: string | null | undefined;
+  emd_code?: string | null;
+  usage_lcl_cd?: string | null;
+  limit?: number;
+}): Promise<{ cases: SaleCase[]; scope: "emd" | "sgg" } | null> {
+  const { sd_code, sgg_code, emd_code, usage_lcl_cd } = opts;
+  const limit = opts.limit ?? 8;
+  if (!sd_code || !sgg_code) return null;
+
+  const base = () => {
+    let q = supabase.from("sale_archive")
+      .select("docid, case_no, maemul_ser, appraisal_amount, min_sale_price, sale_amount, "
+        + "fail_count, bidder_count, sale_date, sale_rate_pct, usage_nm, "
+        + "conv_addr, road_addr, lot_addr, area_summary")
+      .eq("sd_code", sd_code)
+      .eq("sgg_code", sgg_code)
+      .order("sale_date", { ascending: false })
+      .limit(limit);
+    if (usage_lcl_cd) q = q.eq("usage_lcl_cd", usage_lcl_cd);
+    return q;
+  };
+
+  // 읍면동 단위 우선 — 표본 3건 미만이면 시군구로 넓힘
+  if (emd_code) {
+    const { data, error } = await base().eq("emd_code", emd_code);
+    if (!error && (data?.length ?? 0) >= 3) {
+      return { cases: data as unknown as SaleCase[], scope: "emd" };
+    }
+  }
+  const { data, error } = await base();
+  if (error || !data || data.length === 0) return null;
+  return { cases: data as unknown as SaleCase[], scope: "sgg" };
 }
 
 // (이전) courtauction의 selectAuctnTongSrchRslt 라이브 호출 — 발굴 미완으로 비활성

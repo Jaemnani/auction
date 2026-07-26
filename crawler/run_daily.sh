@@ -19,6 +19,8 @@
 #   TIME_BUDGET=7200      전체 예산 (초). 초과 시 남은 step 건너뜀
 #   PHOTOS_PER_PROPERTY=""  매물당 사진 전체 저장 (기본, self-host 용량 자유). N=첫 N장, 0=비저장
 #   SALES_DAYS=7          매각결과 조회 기간 (오늘 기준 N일 전까지)
+#   MOLIT_DAILY_BUDGET=900 실거래가 일일 API 호출 예산 (data.go.kr 1,000/일 대비)
+#   BR_LIMIT=500          건축물대장 표제부 1회 처리 매물 수
 #   REVERSE_GEOCODE_LIMIT=2000  Kakao 역지오코딩 1회 처리량 (KAKAO_REST_API_KEY 필요)
 #   PYTHON=/path/...      (기본: 공용 venv)
 #   --- IP 차단 완화 노브 (courtauction 검색/detail) ---
@@ -242,6 +244,22 @@ SALES_TO="$(/bin/date +%Y%m%d)"
 step "sales-results ($SALES_FROM~$SALES_TO)" crawler/scripts/ingest.py sales-results \
   --bid-from "$SALES_FROM" --bid-to "$SALES_TO"
 
+# 8.5) 낙찰 확정 — soft-delete 매물을 sale_results(docid)와 매칭해 sold/not_sold 확정.
+#      sold 는 RLS(0018)가 30일간 유예 노출. DB-only 수 초, sales-results 직후 배치.
+step "finalize-sold" crawler/scripts/ingest.py finalize-sold
+
+# 8.6) 국토부 실거래가 수집 — 활성 매물 지역만, 월 단위 증분+백필 (0020).
+#      courtauction 무접촉(data.go.kr만) — IP 차단 무관. 예산제라 시간 상한 낮음.
+if [ -n "${DATA_GO_KR_API_KEY:-}" ]; then
+  step "molit-deals" crawler/scripts/molit_ingest.py deals \
+    --budget "${MOLIT_DAILY_BUDGET:-900}"
+  # 8.7) 건축물대장 표제부 — 활성 건물 매물당 1회 (연식/구조/연면적, 0021).
+  drain "building-register" crawler/scripts/molit_ingest.py building-register \
+    --limit "${BR_LIMIT:-500}"
+else
+  echo "[skip] molit-deals / building-register — DATA_GO_KR_API_KEY not set"
+fi
+
 # 9) 파생 카테고리 LLM 보강 — 룰 force 패스는 3.5)로 이동(예산 굶김 방지).
 #    LLM 위치 보강은 증분 유지(완전 미분류 행만) — 매일 같은 행 재호출 비용 방지.
 #    주의: whole_building만 붙은 행은 {}가 아니어서 LLM 위치보강 대상에서 빠짐 (수용).
@@ -249,6 +267,11 @@ if [ -n "${GEMINI_API_KEY:-}" ]; then
   step "backfill-categories (LLM incr)" crawler/scripts/ingest.py backfill-categories --llm
 fi
 # (close-aged는 위 3)으로 이동 — detail 백필 백로그에 굶지 않도록 search 직후 실행)
+
+# 9.5) 낙찰 예상가 배치 예측 — property_estimates upsert (0022). DB-only 수 분.
+#      모델은 주 1회 학습(install_cron.sh estimator-train 라인) — 모델 없으면
+#      지역 평균 매각가율 폴백으로 예측.
+step "estimate-predict" crawler/scripts/estimate.py predict
 
 # 10) 데이터 헬스 리포트 — 파이프라인 감당 여부 상황판 (백로그 소진 전망·커버리지).
 #     DB-only 수 초. 상황판단용이라 TIME_BUDGET 소진과 무관하게 항상 실행 —

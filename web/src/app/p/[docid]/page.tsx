@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import nextDynamic from "next/dynamic";
-import { fetchCodeNames, fetchProperty, fetchRegionStats, photoPublicUrl } from "@/lib/queries";
+import {
+  fetchCodeNames, fetchProperty, fetchRegionStats, fetchRegionalSaleCases, photoPublicUrl,
+} from "@/lib/queries";
 
 // MolitDeals — 클라이언트 fetch 컴포넌트. 청크 분리로 초기 JS 페이로드 축소.
 const MolitDeals = nextDynamic(() => import("@/components/molit-deals").then((m) => ({ default: m.MolitDeals })));
@@ -15,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { EstimateCard } from "@/components/estimate-card";
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
 import { AreaText } from "@/components/area-text";
@@ -128,6 +131,9 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         <ExportButtons markdown={markdown} filename={mdFilename} />
       </div>
 
+      {/* 낙찰 완료 배너 (0018) — 종결 후 30일 유예창 동안만 이 페이지가 열림 */}
+      <SoldBanner p={p} daysLeft={soldDaysLeft(p.deleted_at ?? null)} />
+
       {/* 권리분석 요약 카드 — 입찰 전 필독 */}
       <PropertyRiskCard p={p} />
 
@@ -152,6 +158,11 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         />
         <Stat label="매각기일" value={fmtDate(p.sale_date)} />
       </div>
+
+      {/* 낙찰 예상가 (0022) — 진행중 매물만 (낙찰 완료면 실제 낙찰가가 위 배너에 있음) */}
+      {p.final_result !== "sold" && (
+        <EstimateCard propertyId={p.id} appraisalAmount={p.appraisal_amount} />
+      )}
 
       {/* 물건기본내역 */}
       <Card>
@@ -316,10 +327,11 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         </Card>
       )}
 
-      {/* 인근 낙찰 통계 — 우리 sale_results 집계 */}
+      {/* 인근 낙찰 통계 — 우리 sale_results 집계 + 과거 낙찰 사례(sale_archive) */}
       <NearbyAuctionStats
         sdCode={p.sd_code}
         sggCode={p.sgg_code}
+        emdCode={p.emd_code}
         usageLcl={p.usage_lcl_cd}
         regionLabel={regionParts}
         usageLabel={usageLabel}
@@ -407,16 +419,22 @@ function inferMolitType(
 
 // 인근 낙찰 통계 — 우리 DB의 sale_results 집계 view에서 가져옴
 async function NearbyAuctionStats({
-  sdCode, sggCode, usageLcl, regionLabel, usageLabel, currentRate,
+  sdCode, sggCode, emdCode, usageLcl, regionLabel, usageLabel, currentRate,
 }: {
   sdCode: string | null;
   sggCode: string | null;
+  emdCode?: string | null;
   usageLcl: string | null;
   regionLabel: string;
   usageLabel: string;
   currentRate: number | null;
 }) {
-  const s = await fetchRegionStats(sdCode, sggCode, usageLcl);
+  const [s, recent] = await Promise.all([
+    fetchRegionStats(sdCode, sggCode, usageLcl),
+    fetchRegionalSaleCases({
+      sd_code: sdCode, sgg_code: sggCode, emd_code: emdCode, usage_lcl_cd: usageLcl,
+    }),
+  ]);
   if (!s) return null;
 
   // 현재 매물의 최저가율 vs 평균 매각가율 비교
@@ -452,8 +470,96 @@ async function NearbyAuctionStats({
             ⚠ 최근 90일 매각 표본이 {s.recent_sold_count}건으로 적습니다. 통계 신뢰도가 낮을 수 있습니다.
           </div>
         )}
+
+        {/* 과거 낙찰 사례 — sale_archive(0019). 유예창 지난 매물도 영구 조회 */}
+        {recent && recent.cases.length > 0 && (
+          <div className="pt-2 border-t">
+            <div className="text-xs font-semibold text-muted-foreground mb-2">
+              {recent.scope === "emd" ? "같은 읍·면·동" : "같은 시·군·구"} 과거 낙찰 사례
+              <span className="font-normal ml-1">(최근 {recent.cases.length}건)</span>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>주소</TableHead>
+                    <TableHead>용도</TableHead>
+                    <TableHead className="text-right">감정가</TableHead>
+                    <TableHead className="text-right">낙찰가</TableHead>
+                    <TableHead className="text-right">가율</TableHead>
+                    <TableHead className="text-right">유찰</TableHead>
+                    <TableHead className="text-right">낙찰일</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recent.cases.map((c) => {
+                    const addr = c.road_addr ?? c.lot_addr ?? c.conv_addr ?? c.case_no;
+                    return (
+                      <TableRow key={`${c.case_no}-${c.maemul_ser}`}>
+                        <TableCell className="max-w-[260px] truncate text-xs" title={addr}>
+                          {addr}
+                        </TableCell>
+                        <TableCell className="text-xs">{c.usage_nm ?? "-"}</TableCell>
+                        <TableCell className="text-right text-xs font-mono">
+                          {fmtMoney(c.appraisal_amount)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-mono font-semibold text-blue-700">
+                          {fmtMoney(c.sale_amount)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-mono">
+                          {c.sale_rate_pct != null ? `${c.sale_rate_pct}%` : "-"}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-mono">
+                          {c.fail_count ?? "-"}
+                        </TableCell>
+                        <TableCell className="text-right text-xs">{fmtDate(c.sale_date)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+// 낙찰 유예창 잔여일 — async 페이지 본문에서 호출 (렌더 순수성 lint 회피, ISR 1h라 오차 무해)
+function soldDaysLeft(deletedAt: string | null): number | null {
+  if (!deletedAt) return null;
+  return Math.max(0, 30 - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000));
+}
+
+// 낙찰 완료 배너 (0018) — sold 매물은 종결 후 30일간만 노출되므로 남은 기간 안내
+function SoldBanner({ p, daysLeft }: {
+  p: Awaited<ReturnType<typeof fetchProperty>>; daysLeft: number | null;
+}) {
+  if (!p || p.final_result !== "sold") return null;
+  const soldRate = p.appraisal_amount && p.sold_amount
+    ? Math.round((p.sold_amount / p.appraisal_amount) * 100)
+    : null;
+  return (
+    <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge className="bg-blue-600 text-white hover:bg-blue-600">낙찰 완료</Badge>
+        <span className="text-lg font-bold text-blue-700 dark:text-blue-300">
+          {fmtMoney(p.sold_amount ?? null)}
+        </span>
+        {soldRate != null && (
+          <span className="text-sm text-muted-foreground">감정가의 {soldRate}%</span>
+        )}
+        {p.sold_date && (
+          <span className="text-sm text-muted-foreground">낙찰일 {fmtDate(p.sold_date)}</span>
+        )}
+      </div>
+      <div className="text-xs text-muted-foreground mt-1.5">
+        이 매물은 경매가 종결되었습니다.
+        {daysLeft != null && ` 약 ${daysLeft}일 후 목록에서 내려갑니다.`}
+        {" "}낙찰 통계는 인근 낙찰 통계에 계속 반영됩니다.
+      </div>
+    </div>
   );
 }
 

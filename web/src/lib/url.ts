@@ -29,6 +29,9 @@ export function parseFiltersFromSearchParams(
   if (get("upcoming_only") === "1" || get("upcoming_only") === "true") {
     out.upcoming_only = true;
   }
+  // status: 낙찰 노출 모드 — 허용값만 (임의 문자열 주입 무시)
+  const st = get("status");
+  if (st === "with_sold" || st === "sold_only") out.status = st;
   // exclude_flags: 콤마 구분 (URL에서 단일 키 사용해 간결하게)
   const ef = get("exclude_flags");
   if (ef) {

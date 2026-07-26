@@ -676,9 +676,13 @@ class Store:
                 {"last_seen_at": now_iso}
             ).in_("id", chunk).execute()
         # 부활 — 검색에 다시 등장한 soft-deleted 행 deleted_at 클리어 (+ liveness).
+        # 낙찰 확정 필드(0018)도 함께 클리어 — 재매각으로 재등장한 매물에 이전 회차
+        # '낙찰' 배지가 남는 것 방지 (낙찰 이력 자체는 sale_results 에 보존됨).
         for chunk in _chunked(resurrect_ids, 150):
             self.sb.table("properties").update(
-                {"deleted_at": None, "last_seen_at": now_iso}
+                {"deleted_at": None, "last_seen_at": now_iso,
+                 "final_result": None, "sold_amount": None,
+                 "sold_date": None, "finalized_at": None}
             ).in_("id", chunk).execute()
         if resurrect_ids:
             logger.info("resurrected %d previously-deleted properties", len(resurrect_ids))
@@ -1038,6 +1042,26 @@ class Store:
         logger.info("soft-deleted %d aged properties (%s < %s)",
                     n, col, since_iso)
         return n
+
+    # ---------- finalize-sold (낙찰 확정, 0018) ----------
+
+    def finalize_sold(self) -> int:
+        """deleted && 미확정 매물을 sale_results 와 docid 매칭해 낙찰/비낙찰 확정.
+
+        집합 UPDATE 는 PostgREST 로 불가 → 0018 의 서버측 함수를 rpc 호출.
+        sale_amount > 0 → final_result='sold' (+sold_amount/sold_date),
+        0 → 'not_sold'. 매칭 안 되는 행(취하 등)은 null 유지 — 매일 재시도돼
+        sale_results 가 늦게 도착해도 다음 실행에서 확정됨.
+        """
+        r = self.sb.rpc("finalize_sold_properties").execute()
+        n = int(r.data or 0)
+        logger.info("finalized %d deleted properties against sale_results", n)
+        return n
+
+    def count_finalizable(self) -> int:
+        """finalize_sold 가 이번에 확정할 수 있는 행 수 (dry-run 용)."""
+        r = self.sb.rpc("count_finalizable_properties").execute()
+        return int(r.data or 0)
 
     def last_search_complete_since(self, since_iso: str) -> bool:
         """since_iso 이후 시작된 search run 중 완주(totals.complete=true)한 게 있나.

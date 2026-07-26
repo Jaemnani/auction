@@ -692,6 +692,37 @@ async def cmd_close_aged(args: argparse.Namespace) -> None:
         raise
 
 
+# ---------- finalize-sold (낙찰 확정, 0018) ----------
+
+async def cmd_finalize_sold(args: argparse.Namespace) -> None:
+    """soft-delete 된 미확정 매물을 sale_results(docid 매칭)로 낙찰/비낙찰 확정.
+
+    sale_amount > 0 → final_result='sold' + sold_amount/sold_date 채움 →
+    RLS(0018)가 30일 유예 노출. 매칭 안 되는 행은 null 유지, 매일 재시도.
+    run_daily.sh 가 sales-results 직후 호출. --dry-run: 매칭 카운트만.
+    """
+    store = Store()
+    run_id = store.start_run("finalize_sold", {"dry_run": bool(args.dry_run)})
+    started = time.monotonic()
+    try:
+        if args.dry_run:
+            n = store.count_finalizable()
+            print(f"[dry-run] {n} deleted properties would be finalized "
+                  f"(matched against sale_results)")
+        else:
+            n = store.finalize_sold()
+            print(f"[done] finalized {n} deleted properties against sale_results")
+        store.finish_run(run_id, totals={"finalized": n})
+        print(f"  elapsed {time.monotonic() - started:.1f}s")
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        if "PGRST202" in str(e) or "Could not find the function" in str(e):
+            print("[fatal] finalize_sold_properties() 함수 없음 — "
+                  "0018_sold_grace.sql 을 NAS psql 로 먼저 적용하세요", file=sys.stderr)
+            sys.exit(1)
+        raise
+
+
 # ---------- backfill derived_category ----------
 
 async def cmd_backfill_categories(args: argparse.Namespace) -> None:
@@ -1148,6 +1179,11 @@ def main() -> None:
                       help="ISO datetime (예: 2026-06-01T04:00:00Z) — 보통 search 시작 시각")
     p_ca.add_argument("--dry-run", action="store_true", help="카운트만 표시")
     p_ca.set_defaults(func=cmd_close_aged)
+
+    p_fs = sub.add_parser("finalize-sold",
+                          help="soft-delete 매물을 sale_results와 매칭해 낙찰/비낙찰 확정 (0018)")
+    p_fs.add_argument("--dry-run", action="store_true", help="매칭 카운트만 표시")
+    p_fs.set_defaults(func=cmd_finalize_sold)
 
     p_un = sub.add_parser("backfill-usage-nm",
                           help="기존 매물의 search_row.dspslUsgNm → properties.usage_nm 복사 (0013 직후 1회)")

@@ -20,6 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_SCRIPT="$SCRIPT_DIR/run_daily.sh"
 SCHEDULE="${SCHEDULE:-0 4 * * *}"   # 매일 04:00 (시스템 로컬타임)
 MARKER="# courtauction-daily"        # 우리가 추가한 line을 식별
+# 낙찰 예상가 모델 학습 — 주 1회 (일요일 03:00, 일일 크롤 04:00 전).
+# 예측(predict)은 run_daily.sh 가 매일 수행 — 여기선 train+evaluate 만.
+TRAIN_SCHEDULE="${TRAIN_SCHEDULE:-0 3 * * 0}"
+TRAIN_MARKER="# auction-estimator-train"
+PYTHON_BIN="${PYTHON:-/Users/jaemoonyeah/workspace/venv_common/bin/python}"
+ESTIMATE_SCRIPT="$SCRIPT_DIR/scripts/estimate.py"
 
 # env 변수 prefix 만들기 (있는 것만)
 build_env_prefix() {
@@ -45,31 +51,35 @@ cmd_install() {
   # cron entry — bash -lc로 사용자 login 환경 로드 (PATH 등)
   local entry="$SCHEDULE bash -lc '${env_prefix}${RUN_SCRIPT}' $MARKER"
 
+  # 주간 모델 학습 entry — train 후 evaluate (품질 게이트 로그)
+  local train_entry="$TRAIN_SCHEDULE bash -lc '$PYTHON_BIN $ESTIMATE_SCRIPT train && $PYTHON_BIN $ESTIMATE_SCRIPT evaluate' $TRAIN_MARKER"
+
   # 기존 marker 라인 제거 → 새 entry 추가
   local tmp
   tmp="$(mktemp)"
-  crontab -l 2>/dev/null | grep -v "$MARKER" > "$tmp" || true
+  crontab -l 2>/dev/null | grep -v -e "$MARKER" -e "$TRAIN_MARKER" > "$tmp" || true
   echo "$entry" >> "$tmp"
+  echo "$train_entry" >> "$tmp"
   crontab "$tmp"
   rm -f "$tmp"
 
   echo "[ok] installed"
-  echo "  schedule : $SCHEDULE"
+  echo "  schedule : $SCHEDULE (daily crawl) / $TRAIN_SCHEDULE (estimator train)"
   echo "  command  : $RUN_SCRIPT"
   [ -n "$env_prefix" ] && echo "  env      : $env_prefix"
   echo ""
   echo "현재 crontab 의 우리 entry:"
-  crontab -l | grep "$MARKER"
+  crontab -l | grep -e "$MARKER" -e "$TRAIN_MARKER"
 }
 
 cmd_uninstall() {
-  if ! crontab -l 2>/dev/null | grep -q "$MARKER"; then
+  if ! crontab -l 2>/dev/null | grep -q -e "$MARKER" -e "$TRAIN_MARKER"; then
     echo "[skip] 등록된 entry가 없습니다."
     return 0
   fi
   local tmp
   tmp="$(mktemp)"
-  crontab -l 2>/dev/null | grep -v "$MARKER" > "$tmp" || true
+  crontab -l 2>/dev/null | grep -v -e "$MARKER" -e "$TRAIN_MARKER" > "$tmp" || true
   crontab "$tmp"
   rm -f "$tmp"
   echo "[ok] uninstalled"
@@ -80,9 +90,9 @@ cmd_show() {
   echo "host: $(hostname)"
   echo "TZ:   ${TZ:-$(date +%Z)}"
   echo ""
-  if crontab -l 2>/dev/null | grep -q "$MARKER"; then
+  if crontab -l 2>/dev/null | grep -q -e "$MARKER" -e "$TRAIN_MARKER"; then
     echo "[installed]"
-    crontab -l | grep "$MARKER"
+    crontab -l | grep -e "$MARKER" -e "$TRAIN_MARKER"
   else
     echo "[not installed]"
   fi

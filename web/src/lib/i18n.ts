@@ -30,7 +30,7 @@ export function localeFromPath(pathname: string | null | undefined): Locale {
 // ====================================================================
 const MESSAGES: Record<Locale, MessageDict> = {
   ko: {
-    nav: { list: "목록", map: "지도" },
+    nav: { list: "목록", map: "지도", sold: "최근 낙찰" },
     common: {
       all: "전체",
       apply: "검색",
@@ -83,7 +83,7 @@ const MESSAGES: Record<Locale, MessageDict> = {
     },
   },
   ja: {
-    nav: { list: "リスト", map: "地図" },
+    nav: { list: "リスト", map: "地図", sold: "落札結果" },
     common: {
       all: "すべて",
       apply: "検索",

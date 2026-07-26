@@ -35,6 +35,12 @@ function PropertyRow({ r, usageNames, eager = false }: {
   const discount = fmtDiscount(r.min_sale_price, r.appraisal_amount);
   const usage = r.usage_lcl_cd ? usageNames[r.usage_lcl_cd] : null;
 
+  // 낙찰 완료 (0018) — 종결 후 30일 유예창에서만 목록에 등장 (status=with_sold/sold_only)
+  const isSold = r.final_result === "sold";
+  const soldRate = isSold && r.appraisal_amount && r.sold_amount
+    ? Math.round((r.sold_amount / r.appraisal_amount) * 100)
+    : null;
+
   // 썸네일 — 가장 작은 seq의 storage_path
   const thumb = (r.property_photos ?? [])
     .filter((p) => !!p.storage_path)
@@ -105,8 +111,14 @@ function PropertyRow({ r, usageNames, eager = false }: {
             )}
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+              {isSold && (
+                <Badge className="text-caption-xs bg-blue-600 text-white hover:bg-blue-600">
+                  낙찰 {r.sold_date ? fmtDate(r.sold_date) : ""}
+                </Badge>
+              )}
               <span>매각: {fmtDate(r.sale_date)}</span>
               {(() => {
+                if (isSold) return null;  // 종결 매물엔 D-day 무의미
                 const d = dDay(r.sale_date);
                 if (d == null) return null;
                 const cls = d < 0 ? "text-muted-foreground"
@@ -126,14 +138,26 @@ function PropertyRow({ r, usageNames, eager = false }: {
             </div>
           </div>
 
-          {/* 가격 — 우측 정렬 */}
+          {/* 가격 — 우측 정렬. 낙찰 완료면 최저가 대신 낙찰가 강조 */}
           <div className="shrink-0 text-right space-y-0.5 min-w-[88px]">
             <div className="text-caption-xs text-muted-foreground">감정가</div>
             <div className="text-sm">{fmtMoneyShort(r.appraisal_amount)}</div>
-            <div className="text-caption-xs text-muted-foreground mt-1">최저가</div>
-            <div className="text-sm font-bold text-primary">{fmtMoneyShort(r.min_sale_price)}</div>
-            {ratio != null && (
-              <div className="text-caption-xs text-muted-foreground">감정가의 {ratio}%</div>
+            {isSold ? (
+              <>
+                <div className="text-caption-xs text-blue-600 mt-1">낙찰가</div>
+                <div className="text-sm font-bold text-blue-600">{fmtMoneyShort(r.sold_amount ?? null)}</div>
+                {soldRate != null && (
+                  <div className="text-caption-xs text-muted-foreground">감정가의 {soldRate}%</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="text-caption-xs text-muted-foreground mt-1">최저가</div>
+                <div className="text-sm font-bold text-primary">{fmtMoneyShort(r.min_sale_price)}</div>
+                {ratio != null && (
+                  <div className="text-caption-xs text-muted-foreground">감정가의 {ratio}%</div>
+                )}
+              </>
             )}
           </div>
         </div>

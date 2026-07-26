@@ -45,6 +45,11 @@ export type Property = {
   longitude: number | null;
   latitude: number | null;
   detail_synced_at: string | null;
+  // 낙찰 확정 (0018) — 종결 후 sale_results 매칭으로 채워짐. 지도 select엔 없어 optional.
+  final_result?: "sold" | "not_sold" | null;
+  sold_amount?: number | null;   // 낙찰가 (원)
+  sold_date?: string | null;     // 낙찰된 매각기일
+  deleted_at?: string | null;    // soft-delete 시각 — 낙찰 유예창 판단용
   // PostgREST JSON path로 detail_result에서 발췌 (목록에서도 배지 표시용)
   rmk?: string | null;
   spc_rmk?: string | null;
@@ -105,6 +110,7 @@ export type PropertyFilters = {
   min_rate?: number; // 매각가율 최소 % (= min_sale_price / appraisal × 100)
   max_rate?: number;
   upcoming_only?: boolean; // 매각기일 미래만
+  status?: "active" | "with_sold" | "sold_only"; // 진행중만(기본) / 낙찰 포함 / 낙찰만(30일 유예창)
   addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
   sale_from?: string; // 매각기일 from
   sale_to?: string;

@@ -26,6 +26,8 @@ export function PrimaryNav() {
   const isMapActive = isJp
     ? pathname === "/jp/map"
     : pathname === "/map";
+  // 최근 낙찰 탭 — KR 전용 (JP는 낙찰 확정 파이프라인 없음)
+  const isSoldActive = pathname === "/sold";
 
   const cls = (active: boolean) =>
     "rounded-md px-3 py-1.5 transition " +
@@ -37,6 +39,9 @@ export function PrimaryNav() {
     <nav className="flex items-center gap-1 text-sm">
       <Link href={listHref} className={cls(isListActive)}>{t("nav.list")}</Link>
       <Link href={mapHref} className={cls(isMapActive)}>{t("nav.map")}</Link>
+      {!isJp && (
+        <Link href="/sold" className={cls(isSoldActive)}>{t("nav.sold")}</Link>
+      )}
     </nav>
   );
 }

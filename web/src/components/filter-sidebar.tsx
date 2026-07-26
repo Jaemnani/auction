@@ -126,7 +126,8 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(
     !!(initial.min_appraisal || initial.max_appraisal || initial.min_sale ||
        initial.max_sale || initial.min_fail || initial.max_fail ||
-       initial.sale_from || initial.sale_to || initial.usage_mcl || initial.sgg),
+       initial.sale_from || initial.sale_to || initial.usage_mcl || initial.sgg ||
+       initial.status),
   );
 
   const [sgg, setSgg] = useState<Option[]>([]);
@@ -179,6 +180,9 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     }
     if (f.upcoming_only) params.set("upcoming_only", "1");
     else params.delete("upcoming_only");
+    // status — 낙찰 포함 토글 (with_sold). sold_only는 /sold 페이지 전용이라 여기선 미사용.
+    if (f.status === "with_sold") params.set("status", "with_sold");
+    else params.delete("status");
     // exclude_flags — 콤마 구분 URL 단일 키
     if (f.exclude_flags && f.exclude_flags.length > 0) {
       params.set("exclude_flags", f.exclude_flags.join(","));
@@ -361,6 +365,14 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
                 onChange={(e) => set("upcoming_only", e.target.checked || undefined)}
               />
               <span>미래 기일만</span>
+            </label>
+            <label className="text-xs flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={f.status === "with_sold"}
+                onChange={(e) => set("status", e.target.checked ? "with_sold" : undefined)}
+              />
+              <span>최근 낙찰 포함 <span className="text-muted-foreground">(30일)</span></span>
             </label>
           </div>
           <div>
