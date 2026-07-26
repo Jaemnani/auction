@@ -273,6 +273,10 @@ fi
 #      지역 평균 매각가율 폴백으로 예측.
 step "estimate-predict" crawler/scripts/estimate.py predict
 
+# 9.6) 매수 안전도 점수 — property_scores upsert (0023). DB-only 수 초.
+#      가격 제외, risk_flags(0011) tier 감점 + 유형/연식 보정. detail 미동기는 상한.
+step "safety-score" crawler/scripts/score.py run
+
 # 10) 데이터 헬스 리포트 — 파이프라인 감당 여부 상황판 (백로그 소진 전망·커버리지).
 #     DB-only 수 초. 상황판단용이라 TIME_BUDGET 소진과 무관하게 항상 실행 —
 #     [done]/[warn] 라인이 Discord 다이제스트의 스텝/경고 섹션에 실린다.
