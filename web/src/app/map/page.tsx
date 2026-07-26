@@ -68,8 +68,10 @@ export default async function MapPage(props: PageProps<"/map">) {
   return (
     // 전체 화면 지도 — layout Container의 px-5/py-6을 음수 마진으로 상쇄하고
     // 헤더(h-14) 아래 나머지 viewport 전부를 채움. 필터는 우상단 버튼 → 오버레이.
+    // isolate z-0: 내부 오버레이(z-30/40)가 sticky 헤더(z-30) 위로 새어
+    // 상단 메뉴바를 가리는 것 방지 — 스태킹 컨텍스트를 이 래퍼 안에 가둠.
     <div
-      className="relative -mx-5 -my-6 min-w-0 overflow-hidden"
+      className="relative isolate z-0 -mx-5 -my-6 min-w-0 overflow-hidden"
       style={{ height: "calc(100vh - 3.5rem)" }}
     >
       <PropertyMap rows={rows} activeFilters={activeFilters} fill />
