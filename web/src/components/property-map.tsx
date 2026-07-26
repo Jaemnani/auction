@@ -252,6 +252,11 @@ export function PropertyMap({
             setShowRefreshBtn(true);
           }
         });
+        // 빈 지도(마커 아닌 곳) 클릭 시 열린 상세 InfoWindow 닫기.
+        // AdvancedMarkerElement 클릭은 map click으로 전파되지 않으므로 마커 팝업엔 영향 없음.
+        map.addListener("click", () => {
+          infoWindowRef.current?.close();
+        });
         setMapReady(true);
       })
       .catch((e: unknown) => {
@@ -360,25 +365,65 @@ export function PropertyMap({
       const addrFallback = p.lot_addr || p.conv_addr;
       const addr = addrPlain || (addrFallback ? convertAreaText(addrFallback, unit) : "-");
       const subAddr = p.lot_addr && p.road_addr && p.lot_addr !== p.road_addr
-        ? `<div style="color:#71717a;font-size:11px;margin-top:2px">지번: ${escapeHtml(p.lot_addr)}</div>`
+        ? `<div style="color:#71717a;font-size:11px;margin-top:2px">지번 ${escapeHtml(p.lot_addr)}</div>`
         : "";
       const buildingNote = p.building_summary
-        ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
+        ? `<div style="color:#a1a1aa;font-size:11px;margin-top:3px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
         : "";
       const isSold = p.final_result === "sold";
-      const priceLine = isSold
-        ? `<div style="margin-top:4px"><span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;margin-right:4px">낙찰</span>낙찰가: <strong style="color:#2563eb">${escapeHtml(fmtMoneyShort(p.sold_amount ?? null))}</strong></div>
-        <div style="color:#71717a">낙찰일: ${escapeHtml(fmtDate(p.sold_date ?? null))}</div>`
-        : `<div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
-        ${p.cases?.claim_amount ? `<div style="color:#71717a">청구: ${escapeHtml(fmtMoneyShort(p.cases.claim_amount))}</div>` : ""}
-        <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>`;
+
+      // 할인율(감정가 대비 최저가) — 진행 매물에서만. 우측 상단 배지.
+      const discountPct = !isSold && p.appraisal_amount && p.min_sale_price && p.appraisal_amount > 0
+        ? Math.round((1 - p.min_sale_price / p.appraisal_amount) * 100)
+        : null;
+      const badge = isSold
+        ? `<span style="background:#2563eb;color:#fff;border-radius:9999px;padding:2px 8px;font-size:10px;font-weight:600;white-space:nowrap">낙찰</span>`
+        : discountPct != null && discountPct > 0
+          ? `<span style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">▼${discountPct}%</span>`
+          : "";
+
+      // D-day (진행 매물 매각기일까지 남은 일수)
+      let dday = "";
+      if (!isSold && p.sale_date) {
+        const days = Math.ceil((new Date(p.sale_date + "T00:00:00").getTime() - Date.now()) / 86400000);
+        if (days >= 0 && days <= 60) {
+          const c = days <= 7 ? "#dc2626" : days <= 21 ? "#ea580c" : "#71717a";
+          dday = `<span style="color:${c};font-weight:700;margin-left:6px">D-${days === 0 ? "day" : days}</span>`;
+        }
+      }
+
+      const money = (v: number | null | undefined) => escapeHtml(fmtMoneyShort(v ?? null));
+      const priceBlock = isSold
+        ? `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+             <span style="color:#71717a;font-size:11px">낙찰가</span>
+             <strong style="color:#2563eb;font-size:15px">${money(p.sold_amount)}</strong>
+           </div>
+           <div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px">
+             <span>낙찰일</span><span>${escapeHtml(fmtDate(p.sold_date ?? null))}</span>
+           </div>`
+        : `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+             <span style="color:#71717a;font-size:11px">최저가</span>
+             <span style="text-align:right">
+               <strong style="font-size:15px">${money(p.min_sale_price)}</strong>
+               ${p.appraisal_amount ? `<span style="color:#a1a1aa;font-size:10px;text-decoration:line-through;margin-left:5px">${money(p.appraisal_amount)}</span>` : ""}
+             </span>
+           </div>
+           ${p.cases?.claim_amount ? `<div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px"><span>청구액</span><span>${money(p.cases.claim_amount)}</span></div>` : ""}
+           <div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px">
+             <span>매각기일</span><span>${escapeHtml(fmtDate(p.sale_date))}${dday}</span>
+           </div>`;
+
       return `
-        <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
-        <div style="font-weight:600;margin-top:2px;word-break:keep-all">${escapeHtml(addr)}</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <span style="font-family:monospace;color:#a1a1aa;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</span>
+          ${badge}
+        </div>
+        <div style="font-weight:650;font-size:13px;margin-top:3px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
         ${subAddr}
         ${buildingNote}
-        ${priceLine}
-        ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
+        <div style="height:1px;background:#f0f0f0;margin:9px 0"></div>
+        ${priceBlock}
+        ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;margin-top:10px;padding:6px;background:#f4f4f5;color:#2563eb;border-radius:6px;text-decoration:none;font-weight:600;font-size:12px">상세 보기 →</a>` : ""}`;
     };
 
     // 좌표별로 묶어 겹침을 처리 (겹치면 개수 배지 + 선택 목록 팝업).
@@ -481,7 +526,7 @@ export function PropertyMap({
                   border: `1.5px solid ${color}`,
                 }}
               />
-              <span className={on ? "font-medium" : "text-muted-foreground line-through"}>
+              <span className={on ? "font-medium" : "text-muted-foreground"}>
                 {label}
               </span>
               {n > 0 && (
