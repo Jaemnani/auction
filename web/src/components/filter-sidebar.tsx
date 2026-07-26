@@ -33,6 +33,8 @@ const SORT_OPTIONS: { value: NonNullable<PropertyFilters["sort"]>; label: string
   { value: "fail_desc", label: "유찰 ↓ (많은 순)" },
   { value: "discount_desc", label: "할인율 ↓ (높은 순)" },
   { value: "discount_asc", label: "할인율 ↑ (낮은 순)" },
+  { value: "score_desc", label: "안전도 ↓ (안전한 순)" },
+  { value: "score_asc", label: "안전도 ↑ (위험한 순)" },
 ];
 
 export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
@@ -46,7 +48,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     !!(initial.min_appraisal || initial.max_appraisal || initial.min_sale ||
        initial.max_sale || initial.min_fail || initial.max_fail ||
        initial.sale_from || initial.sale_to || initial.usage_mcl || initial.sgg ||
-       initial.status),
+       initial.status || initial.min_score),
   );
 
   const [sgg, setSgg] = useState<Option[]>([]);
@@ -86,7 +88,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     const writable: (keyof PropertyFilters)[] = [
       "q", "court", "sd", "sgg", "usage_lcl", "usage_mcl", "usage_scl",
       "min_appraisal", "max_appraisal", "min_sale", "max_sale",
-      "min_fail", "max_fail", "min_rate", "max_rate",
+      "min_fail", "max_fail", "min_rate", "max_rate", "min_score",
       "sale_from", "sale_to", "sort", "addr_state",
     ];
     for (const k of writable) {
@@ -119,7 +121,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
   const activeCount = [
     f.q, f.court, f.sd, f.sgg, f.usage_lcl, f.usage_mcl,
     f.min_appraisal, f.max_appraisal, f.min_sale, f.max_sale,
-    f.min_fail, f.max_fail, f.sale_from, f.sale_to,
+    f.min_fail, f.max_fail, f.sale_from, f.sale_to, f.min_score,
   ].filter((v) => v !== undefined && v !== "" && v !== null).length;
 
   // 코드 → 한글 라벨 lookup (기본값: "전체")
@@ -252,6 +254,14 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
           <RangeField label="매각가율 (%)"
             min={f.min_rate} max={f.max_rate}
             onMin={(v) => set("min_rate", v)} onMax={(v) => set("max_rate", v)} />
+          <div>
+            <Label className="text-xs">최소 안전도</Label>
+            <Input type="number" min={0} max={100} placeholder="0~100"
+                   value={f.min_score ?? ""}
+                   onChange={(e) => set("min_score",
+                     e.target.value === "" ? undefined : Number(e.target.value))} />
+            <div className="text-caption-xs text-muted-foreground mt-1">가격 제외 위험성</div>
+          </div>
           <div>
             <Label className="text-xs">매각기일</Label>
             <div className="flex gap-1">

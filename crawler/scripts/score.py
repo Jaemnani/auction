@@ -141,7 +141,17 @@ def cmd_run(args: argparse.Namespace) -> None:
                   "0023_property_scores.sql 을 NAS psql 로 먼저 적용하세요")
             sys.exit(1)
         raise
-    print(f"[done] score — saved={len(payload)} "
+
+    # properties.safety_score 동기화 (정렬/필터용 미러) — 0023 함수. 없으면 경고만.
+    synced = None
+    try:
+        r = sb.rpc("sync_safety_scores").execute()
+        synced = r.data
+    except Exception as e:  # noqa: BLE001 — 0023 함수 미적용 등
+        print(f"[warn] sync_safety_scores 실패(정렬용 미러 미갱신): {e}")
+
+    print(f"[done] score — saved={len(payload)}"
+          f"{f' synced={synced}' if synced is not None else ''} "
           f"({time.monotonic() - started:.0f}s)")
 
 

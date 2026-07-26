@@ -60,6 +60,9 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
   if (filters.min_fail !== undefined) q = q.gte("fail_count", filters.min_fail);
   if (filters.max_fail !== undefined) q = q.lte("fail_count", filters.max_fail);
 
+  // 매수 안전도 최소 (0023) — safety_score NULL(미채점)은 gte에서 자동 제외.
+  if (filters.min_score !== undefined) q = q.gte("safety_score", filters.min_score);
+
   // 매각가율(%) — DB generated column(sale_rate_pct, 마이그레이션 0014)으로 필터.
   // 감정가 0/NULL 또는 최저가 NULL인 row는 sale_rate_pct=NULL → gte/lte에서 자동 제외
   // (= 과거 JS 후처리의 "데이터 없으면 제외" 동작과 동일).
@@ -196,6 +199,10 @@ export async function fetchProperties(
       q = q.order("sale_rate_pct", { ascending: true, nullsFirst: false }); break;
     case "discount_asc":
       q = q.order("sale_rate_pct", { ascending: false, nullsFirst: false }); break;
+    case "score_desc":  // 매수 안전도 높은 순 (안전한 매물 먼저) — 0023 safety_score
+      q = q.order("safety_score", { ascending: false, nullsFirst: false }); break;
+    case "score_asc":
+      q = q.order("safety_score", { ascending: true, nullsFirst: false }); break;
     case "sale_date":
     default:
       // 낙찰만 보기는 "최근 낙찰"이 기본 — 낙찰일 내림차순

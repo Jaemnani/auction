@@ -127,6 +127,7 @@ export type PropertyFilters = {
   max_fail?: number;
   min_rate?: number; // 매각가율 최소 % (= min_sale_price / appraisal × 100)
   max_rate?: number;
+  min_score?: number; // 매수 안전도 최소 (0~100, safety_score) — 0023
   upcoming_only?: boolean; // 매각기일 미래만
   status?: "active" | "with_sold" | "sold_only"; // 진행중만(기본) / 낙찰 포함 / 낙찰만(30일 유예창)
   addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
@@ -140,5 +141,6 @@ export type PropertyFilters = {
     | "appraisal_desc" | "appraisal_asc"
     | "min_sale_asc" | "min_sale_desc"
     | "fail_desc" | "fail_asc"
-    | "discount_desc" | "discount_asc";
+    | "discount_desc" | "discount_asc"
+    | "score_desc" | "score_asc";
 };

@@ -40,4 +40,25 @@ do $$ begin
     for select to anon, authenticated using (true);
 end $$;
 
+-- properties.safety_score — property_scores.score 미러(정렬/필터 인덱스용).
+-- 별도 테이블(breakdown/version)은 유지하되, 목록 정렬·필터는 hot 테이블 컬럼이
+-- 필요(PostgREST가 임베드 컬럼으로 부모 정렬 불가). score.py 가 sync_safety_scores() 로 동기화.
+alter table properties add column if not exists safety_score smallint;
+comment on column properties.safety_score is
+  '매수 안전도(property_scores.score 미러) — 목록 정렬/필터용. sync_safety_scores() 갱신';
+create index if not exists properties_safety_score_idx
+  on properties (safety_score desc) where deleted_at is null;
+
+-- property_scores → properties.safety_score 벌크 동기화(1 문장). score.py 가 upsert 후 rpc 호출.
+-- (finalize_sold_properties() 0018 과 동일 패턴 — PostgREST 집합 UPDATE 대체)
+create or replace function sync_safety_scores() returns integer
+language sql security definer set search_path = public as $$
+  with upd as (
+    update properties p set safety_score = s.score
+    from property_scores s
+    where s.property_id = p.id and p.safety_score is distinct from s.score
+    returning 1
+  ) select count(*)::int from upd;
+$$;
+
 notify pgrst, 'reload schema';

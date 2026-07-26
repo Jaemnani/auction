@@ -2,7 +2,7 @@ import type { PropertyFilters } from "./types";
 
 const NUM_KEYS = [
   "min_appraisal", "max_appraisal", "min_sale", "max_sale",
-  "min_fail", "max_fail", "min_rate", "max_rate", "page", "page_size",
+  "min_fail", "max_fail", "min_rate", "max_rate", "min_score", "page", "page_size",
 ] as const;
 
 export function parseFiltersFromSearchParams(
