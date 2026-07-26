@@ -105,6 +105,17 @@ def main() -> None:
                   .not_.ilike("conv_addr", "%분의%")
                   .not_.contains("risk_flags", ["share_sale"]))
 
+    # ---- 안전도 점수 커버리지 (0023, 적용됐으면) ----
+    scored = scored_low = None
+    try:
+        scored = count(lambda q: q.is_("deleted_at", "null")
+                       .not_.is_("safety_score", "null"))
+        r = (sb.table("property_scores").select("property_id", count="exact")
+             .eq("confidence", "low").limit(1).execute())
+        scored_low = r.count or 0
+    except Exception as e:  # noqa: BLE001 — 0023 미적용 시 컬럼/테이블 없음
+        print(f"  (안전도 점수 커버리지 생략 — 0023 미적용?: {e})")
+
     # ---- 출력 ----
     pct = lambda n: f"{n} ({n * 100 // max(active, 1)}%)"  # noqa: E731
     drain_s = "∞" if drain_days == float("inf") else f"{drain_days:.1f}일"
@@ -113,6 +124,8 @@ def main() -> None:
   [유입] 24h 신규 {new_24h:,} · detail 백로그 {backlog:,} (이 중 D-7 {backlog_d7:,}) · 재수집 대기 {refresh_pending:,}
   [처리량] detail {day_rate:.0f}건/일 (7일 실측) → 백로그 소진 ~{drain_s}
   [갱신] 48h 미재확인 {stale_seen:,} · 좌표 없음 {pct(no_coords)} · 주소 없음 {pct(no_addr)} · 분류 누락 {uncat:,}""")
+    if scored is not None:
+        print(f"  [점수] 안전도 채점 {pct(scored)} · 잠정(정보부족) {scored_low:,}")
 
     # ---- 판정 → [warn] (다이제스트 경고 섹션에 노출) ----
     warns: list[str] = []
