@@ -47,8 +47,13 @@ const LCL_COLORS: Record<string, { color: string; label: string }> = {
 };
 const LCL_UNKNOWN = { color: "#525252", label: "미분류" }; // neutral-600
 
-function markerColor(lclCd: string | null | undefined): string {
-  return (lclCd && LCL_COLORS[lclCd]?.color) || LCL_UNKNOWN.color;
+// 최근 낙찰(종결 후 30일 유예창, 0018) — 용도색보다 우선하는 고유색.
+// 목록/상세의 낙찰 배지(blue-600)와 통일.
+const SOLD = { color: "#2563eb", label: "최근 낙찰 (30일)" };
+
+function markerColor(p: Property): string {
+  if (p.final_result === "sold") return SOLD.color;
+  return (p.usage_lcl_cd && LCL_COLORS[p.usage_lcl_cd]?.color) || LCL_UNKNOWN.color;
 }
 
 export type ActiveFilter = { label: string; value: string };
@@ -313,13 +318,18 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
       const buildingNote = p.building_summary
         ? `<div style="color:#a1a1aa;font-size:10px;margin-top:2px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
         : "";
+      const isSold = p.final_result === "sold";
+      const priceLine = isSold
+        ? `<div style="margin-top:4px"><span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;margin-right:4px">낙찰</span>낙찰가: <strong style="color:#2563eb">${escapeHtml(fmtMoneyShort(p.sold_amount ?? null))}</strong></div>
+        <div style="color:#71717a">낙찰일: ${escapeHtml(fmtDate(p.sold_date ?? null))}</div>`
+        : `<div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
+        <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>`;
       return `
         <div style="font-family:monospace;color:#71717a;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</div>
         <div style="font-weight:600;margin-top:2px;word-break:keep-all">${escapeHtml(addr)}</div>
         ${subAddr}
         ${buildingNote}
-        <div style="margin-top:4px">최저: <strong>${escapeHtml(fmtMoneyShort(p.min_sale_price))}</strong></div>
-        <div style="color:#71717a">매각: ${escapeHtml(fmtDate(p.sale_date))}</div>
+        ${priceLine}
         ${p.docid ? `<a href="/p/${encodeURIComponent(p.docid)}" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:4px">상세 →</a>` : ""}`;
     };
 
@@ -332,7 +342,7 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
       let content: HTMLElement;
       if (grp.length === 1) {
         html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0)}</div>`;
-        content = makePin(markerColor(p0.usage_lcl_cd)).element;
+        content = makePin(markerColor(p0)).element;
       } else {
         const shown = grp.slice(0, CLUSTER_LIST_MAX);
         const more = grp.length - shown.length;
@@ -370,6 +380,10 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
     for (const p of points) if (p.usage_lcl_cd) s.add(p.usage_lcl_cd);
     return s;
   }, [points]);
+  const presentSold = useMemo(
+    () => points.some((p) => p.final_result === "sold"),
+    [points],
+  );
 
   if (!GOOGLE_MAPS_API_KEY || mapError) {
     return <MapKeyNotice error={mapError} className="h-[480px]" />;
@@ -410,6 +424,12 @@ export function PropertyMap({ rows: initialRows, autoRefresh = false, activeFilt
             </span>
           </div>
         ))}
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: SOLD.color }} />
+          <span className={presentSold ? "font-medium" : "text-muted-foreground"}>
+            {SOLD.label}
+          </span>
+        </div>
       </div>
 
       {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}

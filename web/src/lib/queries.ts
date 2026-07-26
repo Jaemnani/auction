@@ -24,7 +24,7 @@ const PROPERTY_SELECT = LIST_PROPERTY_SELECT;
 const MAP_PROPERTY_SELECT = `
   id, docid, maemul_ser, appraisal_amount, min_sale_price, fail_count,
   sale_date, usage_lcl_cd, conv_addr, road_addr, lot_addr, building_summary,
-  longitude, latitude,
+  longitude, latitude, final_result, sold_amount, sold_date,
   cases:case_id!inner ( case_no )
 `;
 
@@ -516,9 +516,10 @@ export async function fetchPropertiesForMap(
   let q: FilterableQuery = supabase
     .from("properties")
     .select(MAP_PROPERTY_SELECT)
-    .is("deleted_at", null)
     .not("longitude", "is", null)
     .not("latitude", "is", null);
+  // 지도는 기본으로 최근 낙찰(30일 유예창)도 함께 표시 — 파란 마커로 구분.
+  q = applyStatus(q, filters.status ?? "with_sold");
   q = applyFilters(q, filters);
   if (bbox) {
     q = q.gte("longitude", bbox.minLng).lte("longitude", bbox.maxLng)
