@@ -18,6 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { EstimateCard } from "@/components/estimate-card";
+import { ScoreCard } from "@/components/score-badge";
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
 import { AreaText } from "@/components/area-text";
@@ -158,6 +159,9 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
         />
         <Stat label="매각기일" value={fmtDate(p.sale_date)} />
       </div>
+
+      {/* 매수 안전도 (0023) — 가격 제외 위험성 점수 */}
+      <ScoreCard score={p.scores} />
 
       {/* 낙찰 예상가 (0022) — 진행중 매물만 (낙찰 완료면 실제 낙찰가가 위 배너에 있음) */}
       {p.final_result !== "sold" && (

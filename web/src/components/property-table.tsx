@@ -4,6 +4,7 @@ import { fmtDate, fmtDiscount, fmtMoneyShort } from "@/lib/format";
 import { photoThumbUrl } from "@/lib/queries";
 import { dDay, fmtDDay } from "@/lib/analysis";
 import { AreaText } from "@/components/area-text";
+import { ScoreBadge } from "@/components/score-badge";
 import type { Property } from "@/lib/types";
 
 type Props = { rows: Property[]; usageNames?: Record<string, string> };
@@ -85,6 +86,7 @@ function PropertyRow({ r, usageNames, eager = false }: {
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground truncate">{r.cases?.courts?.name ?? "-"}</span>
               {usage && <Badge variant="outline" className="text-caption-xs">{usage}</Badge>}
+              <ScoreBadge score={r.scores} size="sm" />
             </div>
 
             <div className="text-sm font-medium truncate">

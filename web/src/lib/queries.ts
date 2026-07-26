@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
-import type { Property, PropertyDetail, PropertyFilters } from "./types";
+import type { Property, PropertyDetail, PropertyFilters, PropertyScoreBrief } from "./types";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -113,6 +113,49 @@ function applyStatus(q: FilterableQuery, status: PropertyFilters["status"]): Fil
   return q.is("deleted_at", null);  // 기본: 진행중만
 }
 
+// 매수 안전도 점수 (0023) — 별도 조회로 attach. 목록/지도 select 에 임베드하지 않는 이유:
+// 0023 미적용 상태에서 임베드하면 관계 없음 오류로 목록/지도 전체가 깨짐(웹은 push 시
+// 즉시 배포되나 마이그레이션은 NAS 수동 적용 → 시차). 조회 실패 시 점수 없이 degrade.
+async function fetchScoresByIds(
+  ids: string[],
+): Promise<Record<string, PropertyScoreBrief>> {
+  const out: Record<string, PropertyScoreBrief> = {};
+  if (ids.length === 0) return out;
+  const CHUNK = 150; // uuid .in_() 150 초과 시 NAS nginx 414 (memo 주의사항)
+  try {
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await supabase
+        .from("property_scores")
+        .select("property_id, score, confidence")
+        .in("property_id", ids.slice(i, i + CHUNK));
+      if (error) return out;  // 0023 미적용 등 — 점수 없이 진행
+      for (const r of (data ?? []) as Array<{ property_id: string } & PropertyScoreBrief>) {
+        out[r.property_id] = { score: r.score, confidence: r.confidence };
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+async function attachScores<T extends Property>(rows: T[]): Promise<T[]> {
+  const scores = await fetchScoresByIds(rows.map((r) => r.id));
+  for (const r of rows) r.scores = scores[r.id] ?? null;
+  return rows;
+}
+
+// 상세용 — breakdown 포함 단건. 실패 시 null(카드 숨김), EstimateCard 와 동일 패턴.
+export async function fetchScore(propertyId: string): Promise<PropertyScoreBrief | null> {
+  const { data, error } = await supabase
+    .from("property_scores")
+    .select("score, confidence, breakdown")
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (error) return null;  // 0023 미적용 등
+  return (data as PropertyScoreBrief) ?? null;
+}
+
 export async function fetchProperties(
   filters: PropertyFilters,
 ): Promise<PropertyListResult> {
@@ -169,6 +212,7 @@ export async function fetchProperties(
   if (error) throw error;
   // 매각가율 필터는 이제 DB(sale_rate_pct)에서 적용 → count/페이지네이션 정확.
   const rows = (data ?? []) as unknown as Property[];
+  await attachScores(rows);  // 매수 안전도(0023) — 실패 시 점수 없이 진행
 
   return {
     rows,
@@ -221,7 +265,7 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
   if (!data) return null;
 
   const row = data as unknown as Record<string, unknown>;
-  return {
+  const detail: PropertyDetail = {
     ...(row as unknown as PropertyDetail),
     search_row: null,
     detail_result: {
@@ -235,6 +279,8 @@ export async function fetchProperty(docid: string): Promise<PropertyDetail | nul
       gdsDspslObjctLst: row.gdsDspslObjctLst,
     },
   };
+  detail.scores = await fetchScore(detail.id);  // 매수 안전도(0023, breakdown 포함)
+  return detail;
 }
 
 // 코드 → 이름 매핑 (지역/용도)
@@ -550,5 +596,6 @@ export async function fetchPropertiesForMap(
         && r.longitude >= 124 && r.longitude <= 132.5
         && r.latitude  >= 33  && r.latitude  <= 39,
       );
+  await attachScores(out);  // 매수 안전도(0023) — 실패 시 점수 없이 진행
   return out;
 }

@@ -15,6 +15,22 @@ export type UsageCode = {
   name: string;
 };
 
+// 매수 안전도 점수 (0023) — property_scores. 목록/지도엔 (score,confidence)만,
+// 상세엔 breakdown 포함. score.py 배치 계산 결과.
+export type PropertyScoreBrief = {
+  score: number;
+  confidence: "high" | "medium" | "low";
+  breakdown?: {
+    base: number;
+    legal_penalty: number;
+    type_adj: number;
+    age_adj: number;
+    nature: string;
+    flag_count: number;
+    top_factors: Array<{ label: string; penalty: number; tier: "danger" | "warn" | "info" }>;
+  } | null;
+};
+
 export type Property = {
   id: string;
   case_id: string;
@@ -61,6 +77,7 @@ export type Property = {
   claim_amt?: string | number | null;
   spcfc_ecdoc_id?: string | null;
   property_photos?: Array<{ seq: number; storage_path: string | null }> | null;
+  scores?: PropertyScoreBrief | null;   // 매수 안전도 (0023) — 임베드, 미채점이면 null
   cases: {
     id: string;
     court_code: string;

@@ -413,10 +413,23 @@ export function PropertyMap({
              <span>매각기일</span><span>${escapeHtml(fmtDate(p.sale_date))}${dday}</span>
            </div>`;
 
+      // 매수 안전도(0023) 칩 — 점수대별 색. ScoreBadge와 색 통일.
+      const sc = p.scores;
+      const scoreChip = sc
+        ? (() => {
+            const b = sc.score >= 80 ? ["#059669", "안전"]
+              : sc.score >= 65 ? ["#65a30d", "양호"]
+              : sc.score >= 45 ? ["#d97706", "주의"]
+              : ["#dc2626", "위험"];
+            const dim = sc.confidence === "low" ? "opacity:0.6;" : "";
+            return `<span style="${dim}background:${b[0]}1a;color:${b[0]};border:1px solid ${b[0]}40;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap" title="매수 안전도 ${sc.score}/100">${b[1]} ${sc.score}${sc.confidence === "low" ? "?" : ""}</span>`;
+          })()
+        : "";
+
       return `
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <span style="font-family:monospace;color:#a1a1aa;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</span>
-          ${badge}
+          <span style="display:flex;gap:4px;align-items:center">${scoreChip}${badge}</span>
         </div>
         <div style="font-weight:650;font-size:13px;margin-top:3px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
         ${subAddr}
