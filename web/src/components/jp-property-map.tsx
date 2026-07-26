@@ -30,6 +30,8 @@ export type JpMapRow = {
 
 type Props = {
   rows: JpMapRow[];
+  /** true면 부모 높이를 100% 채움 (전체 화면 지도) */
+  fill?: boolean;
 };
 
 function fmtJpy(v: number | null | undefined): string {
@@ -56,7 +58,7 @@ type CircleSel = {
   radiusM: number;
 } | null;
 
-export function JpPropertyMap({ rows }: Props) {
+export function JpPropertyMap({ rows, fill = false }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -261,11 +263,13 @@ export function JpPropertyMap({ rows }: Props) {
     : 0;
 
   if (!GOOGLE_MAPS_API_KEY || mapError) {
-    return <MapKeyNotice error={mapError} className="h-[70vh] min-h-[500px]" />;
+    return <MapKeyNotice error={mapError} className={fill ? "h-full" : "h-[70vh] min-h-[500px]"} />;
   }
 
   return (
-    <div className="relative h-[70vh] min-h-[500px] rounded-lg border overflow-hidden">
+    <div className={fill
+      ? "relative h-full overflow-hidden"
+      : "relative h-[70vh] min-h-[500px] rounded-lg border overflow-hidden"}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
 
       {/* 마우스 이벤트 오버레이 — drawMode에서만 pointer-events 활성 */}

@@ -1,10 +1,8 @@
-import Link from "next/link";
 import nextDynamic from "next/dynamic";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import type { JpMapRow } from "@/components/jp-property-map";
 import { supabase } from "@/lib/supabase";
 import { JpFilterBar } from "@/components/jp-filter-bar";
+import { MapFilterOverlay } from "@/components/map-filter-overlay";
 import { type JpFilters, parseJpFilters } from "@/lib/jp-filters";
 
 // MapLibre 청크 분리
@@ -112,24 +110,17 @@ export default async function JpMapPage(props: {
   ]);
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-lg border bg-card p-5 space-y-2">
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-xs">座標あり {rows.length}件</Badge>
-          <Badge variant="outline" className="text-xs">OpenFreeMap タイル</Badge>
-        </div>
-        <h1 className="text-xl font-bold tracking-tight">🇯🇵 物件マップ</h1>
-        <p className="text-sm text-muted-foreground">
-          物件の位置を日本全国マップで確認。マーカーをクリックすると 事件番号·価格·住所·詳細リンクのポップアップ。
-          {" "}
-          <Link href="/jp" className="text-primary hover:underline">リスト表示</Link>
-        </p>
-      </section>
-
-      {/* 필터 — 목록과 동일한 컴포넌트 */}
-      <JpFilterBar action="/jp/map" filters={filters} prefs={prefs} courts={courts} pdfStats={pdfStats} />
-
-      <JpPropertyMap rows={rows} />
+    // 전체 화면 지도 — KR /map 과 동일 패턴. Container px/py 상쇄 + 헤더 아래 전부.
+    // isolate z-0: 내부 오버레이가 sticky 헤더를 가리지 않게 스태킹 격리.
+    <div
+      className="relative isolate z-0 -mx-5 -my-6 min-w-0 overflow-hidden"
+      style={{ height: "calc(100vh - 3.5rem)" }}
+    >
+      <JpPropertyMap rows={rows} fill />
+      <MapFilterOverlay>
+        {/* 필터 — 목록과 동일한 컴포넌트 */}
+        <JpFilterBar action="/jp/map" filters={filters} prefs={prefs} courts={courts} pdfStats={pdfStats} />
+      </MapFilterOverlay>
     </div>
   );
 }
