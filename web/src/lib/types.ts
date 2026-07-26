@@ -114,9 +114,7 @@ export type PropertyFilters = {
   addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
   sale_from?: string; // 매각기일 from
   sale_to?: string;
-  exclude_flags?: string[];  // risk_flags 코드 — 매물의 risk_flags와 overlap 시 제외
-  usage_nm?: string[];       // 한국 한글 용도명 다중 선택 (아파트/오피스텔/단독주택...) — 매물의 usage_nm 이 set 중 하나면 포함
-  derived?: string[];        // 파생 카테고리 다중 선택 (country_house/townhouse...) — derived_category 와 overlap 시 포함
+  // (exclude_flags / usage_nm 칩 / derived 필터는 2026-07-26 제거 — 재설계 예정)
   page?: number;
   page_size?: number;
   sort?:
