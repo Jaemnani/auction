@@ -244,7 +244,9 @@ export function PropertyMap({
         });
         mapRef.current = map;
         projectionRef.current = createProjectionHelper(map);
-        infoWindowRef.current = new google.maps.InfoWindow({ maxWidth: 340 });
+        // headerDisabled: 닫기 X 버튼 줄 자체를 제거 — 팝업 상단 공백 원인.
+        // 닫기는 빈 지도 클릭(map click 리스너) 또는 다른 마커 클릭으로.
+        infoWindowRef.current = new google.maps.InfoWindow({ maxWidth: 340, headerDisabled: true });
         // 초기 로드 직후 타일 로드·레이아웃 변동으로 오는 idle 연쇄는 무시
         suppressUntilRef.current = performance.now() + 2000;
 
@@ -376,10 +378,8 @@ export function PropertyMap({
 
     if (visiblePoints.length === 0) return;
 
-    // 사건번호 + (안전도·낙찰/하락%) 배지 행 — 단일 매물 팝업에선 InfoWindow
-    // 헤더(닫기 X와 같은 줄)로 올려 상단 공백을 없애고, 겹침 목록 카드에선
-    // 카드 안 첫 줄로 그대로 쓴다.
-    const headerRowHtml = (p: Property, forHeaderSlot = false) => {
+    // 사건번호 + (안전도·낙찰/하락%) 배지 행 — 카드 첫 줄.
+    const headerRowHtml = (p: Property) => {
       const isSold = p.final_result === "sold";
       // 할인율(감정가 대비 최저가) — 진행 매물에서만.
       const discountPct = !isSold && p.appraisal_amount && p.min_sale_price && p.appraisal_amount > 0
@@ -402,17 +402,14 @@ export function PropertyMap({
             return `<span style="${dim}background:${b[0]}1a;color:${b[0]};border:1px solid ${b[0]}40;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap" title="매수 안전도 ${sc.score}/100">${b[1]} ${sc.score}${sc.confidence === "low" ? "?" : ""}</span>`;
           })()
         : "";
-      // 헤더 슬롯은 부모가 내용 폭만큼만 잡으므로 min-width로 좌우 정렬 확보
-      // (content min-width 240px − 닫기버튼 ≈ 200px).
-      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;${forHeaderSlot ? "min-width:200px;font-size:12px;line-height:1.4;" : ""}">
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <span style="font-family:monospace;color:#a1a1aa;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</span>
           <span style="display:flex;gap:4px;align-items:center">${scoreChip}${badge}</span>
         </div>`;
     };
 
     // 한 매물의 팝업 카드 HTML (겹침 시 목록의 한 항목으로도 재사용).
-    // withHeader=false — 단일 매물 팝업: 배지 행이 InfoWindow 헤더로 올라가므로 제외.
-    const cardHtml = (p: Property, withHeader = true) => {
+    const cardHtml = (p: Property) => {
       const addrPlain = p.road_addr;
       const addrFallback = p.lot_addr || p.conv_addr;
       const addr = addrPlain || (addrFallback ? convertAreaText(addrFallback, unit) : "-");
@@ -456,8 +453,8 @@ export function PropertyMap({
            </div>`;
 
       return `
-        ${withHeader ? headerRowHtml(p) : ""}
-        <div style="font-weight:650;font-size:13px;margin-top:${withHeader ? 3 : 0}px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
+        ${headerRowHtml(p)}
+        <div style="font-weight:650;font-size:13px;margin-top:3px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
         ${subAddr}
         ${buildingNote}
         <div style="height:1px;background:#f0f0f0;margin:9px 0"></div>
@@ -470,23 +467,19 @@ export function PropertyMap({
       const p0 = grp[0];
       const lng = p0.longitude!, lat = p0.latitude!;
 
-      // 팝업 첫 줄(배지 행/건수 제목)을 InfoWindow 헤더로 올려 닫기 X 버튼과
-      // 같은 줄에 배치 — X 버튼 줄이 만들던 상단 공백 제거.
       let html: string;
-      let headerHtml: string;
       let content: HTMLElement;
       if (grp.length === 1) {
-        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0, false)}</div>`;
-        headerHtml = headerRowHtml(p0, true);
+        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0)}</div>`;
         content = makePin(markerColor(p0)).element;
       } else {
         const shown = grp.slice(0, CLUSTER_LIST_MAX);
         const more = grp.length - shown.length;
         html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:320px;max-height:320px;overflow-y:auto">
+            <div style="font-weight:700;margin-bottom:6px">이 위치에 ${grp.length}건</div>
             ${shown.map((p, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${cardHtml(p)}</div>`).join("")}
             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
           </div>`;
-        headerHtml = `<div style="font-weight:700;font-size:13px;min-width:200px">이 위치에 ${grp.length}건</div>`;
         content = makeCountBadgeEl(grp.length);
       }
       const marker = new google.maps.marker.AdvancedMarkerElement({
@@ -500,7 +493,6 @@ export function PropertyMap({
         if (!iw) return;
         // InfoWindow auto-pan이 idle을 발생시키므로 새로고침 트리거에서 제외
         suppressUntilRef.current = performance.now() + 1200;
-        iw.setHeaderContent(htmlToEl(headerHtml));
         iw.setContent(html);
         iw.open({ map, anchor: marker });
       });
@@ -633,27 +625,29 @@ export function PropertyMap({
             }}
           />
         )}
-        <div className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm">
-          마커 <strong>{visiblePoints.length.toLocaleString()}</strong>개
+        <div className="self-start rounded-md bg-background/95 border px-2 py-1 text-caption-sm shadow-sm">
+          마커 <strong>{visiblePoints.length.toLocaleString()}</strong>
           {visiblePoints.length < count && (
-            <span className="text-muted-foreground ml-1">/ 전체 {count.toLocaleString()}</span>
+            <span className="text-muted-foreground ml-1">/ {count.toLocaleString()}</span>
           )}
           {circle && (
             <span className="text-muted-foreground ml-1">
               (반경 {(circle.radiusM / 1000).toFixed(1)}km)
             </span>
           )}
-          {loading && <span className="ml-2 text-muted-foreground">불러오는 중…</span>}
+          {loading && <span className="ml-1.5 text-muted-foreground">불러오는 중…</span>}
         </div>
         {/* 모바일: 자동 새로고침이 기본 ON이라 토글 자체를 숨겨 지도 가림 최소화 */}
-        <label className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm hidden sm:flex items-center gap-1.5 cursor-pointer select-none">
+        <label className="self-start rounded-md bg-background/95 border px-2 py-1 text-caption-sm shadow-sm hidden sm:flex items-center gap-1.5 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={autoMode}
             onChange={(e) => setAutoMode(e.target.checked)}
           />
-          <span>지도 이동 시 자동 새로고침</span>
+          <span>자동 새로고침</span>
         </label>
+        {/* 원형 영역 선택 — 잠시 숨김 (2026-08-03 사용자 요청). 재노출 시 아래 주석 해제.
+            터치 드래그 미지원(마우스 전용)이라 모바일 대응도 함께 필요.
         <button
           type="button"
           onClick={() => {
@@ -665,17 +659,15 @@ export function PropertyMap({
             }
           }}
           className={
-            // 원형 선택은 마우스 드래그 전용(터치 미지원) — 모바일에선 숨김
             "hidden sm:block rounded-md px-3 py-1.5 text-xs border shadow-sm font-medium text-left " +
             (drawMode
               ? "bg-red-600 text-white border-red-600"
-              : circle
-                ? "bg-background/95 text-foreground border-border hover:bg-muted"
-                : "bg-background/95 text-foreground border-border hover:bg-muted")
+              : "bg-background/95 text-foreground border-border hover:bg-muted")
           }
         >
           {drawMode ? "📍 드래그로 원 그리기" : circle ? "✕ 원형 선택 해제" : "⭕ 원형 영역 선택"}
         </button>
+        */}
       </div>
 
       {/* 수동 새로고침 버튼 — 화면 중앙 상단 */}
@@ -691,13 +683,6 @@ export function PropertyMap({
       )}
     </div>
   );
-}
-
-/** InfoWindow headerContent용 — HTML 문자열을 Element로 (string은 plain text로만 렌더됨). */
-function htmlToEl(html: string): HTMLElement {
-  const d = document.createElement("div");
-  d.innerHTML = html;
-  return d;
 }
 
 function escapeHtml(s: string): string {

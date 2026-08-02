@@ -47,14 +47,14 @@ export function MapSearchBox({ region, onLocate }: {
   };
 
   return (
-    // 모바일 세로모드에선 우상단 필터 버튼과 같은 줄 — 겹치지 않게 폭 축소
-    <div className="rounded-md bg-background/95 border px-2 py-1.5 text-xs shadow-sm w-44 sm:w-56">
+    // 지도를 덜 가리도록 컴팩트 — 모바일은 우상단 필터 버튼과 같은 줄이라 더 좁게
+    <div className="rounded-md bg-background/95 border px-2 py-1 text-caption-sm shadow-sm w-36 sm:w-44">
       <div className="flex items-center gap-1">
         <input
           value={q}
           onChange={(e) => { setQ(e.target.value); setError(null); }}
           onKeyDown={(e) => e.key === "Enter" && search()}
-          placeholder="위치 검색 (주소·지명)"
+          placeholder="위치 검색"
           aria-label="위치 검색"
           className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-muted-foreground"
         />
