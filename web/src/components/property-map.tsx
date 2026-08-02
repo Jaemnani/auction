@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Property } from "@/lib/types";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
@@ -73,11 +73,19 @@ const LEGEND_ITEMS: { key: string; color: string; label: string }[] = [
 // 기본 표시 분류 — 건물(20000)만 켜고 나머지는 꺼둠.
 const DEFAULT_ENABLED_KEYS = ["20000"];
 
+// legend 기본 펼침 기준 — sm 브레이크포인트와 동일.
+const DESKTOP_MQ = "(min-width: 640px)";
+function subscribeDesktopMq(cb: () => void): () => void {
+  const mq = window.matchMedia(DESKTOP_MQ);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
 export type ActiveFilter = { label: string; value: string };
 
 type Props = {
   rows: Property[];
-  /** true면 viewport 이동 시 자동 새로고침, false면 버튼 노출 */
+  /** true면 viewport 이동 시 자동 새로고침, false면 버튼 노출 (기본 ON) */
   autoRefresh?: boolean;
   /** 활성 필터 — 지도 상단에 chip 으로 표시.
    *  사용자가 어떤 필터가 적용 중인지 즉시 인식 가능 (특히 "lcl 필터 안 켰는데
@@ -88,7 +96,7 @@ type Props = {
 };
 
 export function PropertyMap({
-  rows: initialRows, autoRefresh = false, activeFilters = [], fill = false,
+  rows: initialRows, autoRefresh = true, activeFilters = [], fill = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -125,6 +133,15 @@ export function PropertyMap({
       return next;
     });
   }, []);
+  // legend 펼침 — 모바일 세로모드에선 오버레이가 지도를 가려 기본 접힘, 데스크탑은 펼침.
+  // matchMedia 구독(useSyncExternalStore)이라 SSR(false)→hydration 전환이 안전.
+  const isDesktop = useSyncExternalStore(
+    subscribeDesktopMq,
+    () => window.matchMedia(DESKTOP_MQ).matches,
+    () => false,
+  );
+  const [legendOverride, setLegendOverride] = useState<boolean | null>(null);
+  const legendOpen = legendOverride ?? isDesktop;
 
   // initialRows가 props로 갱신되면 (필터 변경 시) 동기화
   useEffect(() => {
@@ -359,8 +376,43 @@ export function PropertyMap({
 
     if (visiblePoints.length === 0) return;
 
+    // 사건번호 + (안전도·낙찰/하락%) 배지 행 — 단일 매물 팝업에선 InfoWindow
+    // 헤더(닫기 X와 같은 줄)로 올려 상단 공백을 없애고, 겹침 목록 카드에선
+    // 카드 안 첫 줄로 그대로 쓴다.
+    const headerRowHtml = (p: Property, forHeaderSlot = false) => {
+      const isSold = p.final_result === "sold";
+      // 할인율(감정가 대비 최저가) — 진행 매물에서만.
+      const discountPct = !isSold && p.appraisal_amount && p.min_sale_price && p.appraisal_amount > 0
+        ? Math.round((1 - p.min_sale_price / p.appraisal_amount) * 100)
+        : null;
+      const badge = isSold
+        ? `<span style="background:#2563eb;color:#fff;border-radius:9999px;padding:2px 8px;font-size:10px;font-weight:600;white-space:nowrap">낙찰</span>`
+        : discountPct != null && discountPct > 0
+          ? `<span style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">▼${discountPct}%</span>`
+          : "";
+      // 매수 안전도(0023) 칩 — 점수대별 색. ScoreBadge와 색 통일.
+      const sc = p.scores;
+      const scoreChip = sc
+        ? (() => {
+            const b = sc.score >= 80 ? ["#059669", "안전"]
+              : sc.score >= 65 ? ["#65a30d", "양호"]
+              : sc.score >= 45 ? ["#d97706", "주의"]
+              : ["#dc2626", "위험"];
+            const dim = sc.confidence === "low" ? "opacity:0.6;" : "";
+            return `<span style="${dim}background:${b[0]}1a;color:${b[0]};border:1px solid ${b[0]}40;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap" title="매수 안전도 ${sc.score}/100">${b[1]} ${sc.score}${sc.confidence === "low" ? "?" : ""}</span>`;
+          })()
+        : "";
+      // 헤더 슬롯은 부모가 내용 폭만큼만 잡으므로 min-width로 좌우 정렬 확보
+      // (content min-width 240px − 닫기버튼 ≈ 200px).
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;${forHeaderSlot ? "min-width:200px;font-size:12px;line-height:1.4;" : ""}">
+          <span style="font-family:monospace;color:#a1a1aa;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</span>
+          <span style="display:flex;gap:4px;align-items:center">${scoreChip}${badge}</span>
+        </div>`;
+    };
+
     // 한 매물의 팝업 카드 HTML (겹침 시 목록의 한 항목으로도 재사용).
-    const cardHtml = (p: Property) => {
+    // withHeader=false — 단일 매물 팝업: 배지 행이 InfoWindow 헤더로 올라가므로 제외.
+    const cardHtml = (p: Property, withHeader = true) => {
       const addrPlain = p.road_addr;
       const addrFallback = p.lot_addr || p.conv_addr;
       const addr = addrPlain || (addrFallback ? convertAreaText(addrFallback, unit) : "-");
@@ -371,16 +423,6 @@ export function PropertyMap({
         ? `<div style="color:#a1a1aa;font-size:11px;margin-top:3px">${escapeHtml(convertAreaText(p.building_summary.split("\\n")[0].slice(0, 60), unit))}</div>`
         : "";
       const isSold = p.final_result === "sold";
-
-      // 할인율(감정가 대비 최저가) — 진행 매물에서만. 우측 상단 배지.
-      const discountPct = !isSold && p.appraisal_amount && p.min_sale_price && p.appraisal_amount > 0
-        ? Math.round((1 - p.min_sale_price / p.appraisal_amount) * 100)
-        : null;
-      const badge = isSold
-        ? `<span style="background:#2563eb;color:#fff;border-radius:9999px;padding:2px 8px;font-size:10px;font-weight:600;white-space:nowrap">낙찰</span>`
-        : discountPct != null && discountPct > 0
-          ? `<span style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">▼${discountPct}%</span>`
-          : "";
 
       // D-day (진행 매물 매각기일까지 남은 일수)
       let dday = "";
@@ -413,25 +455,9 @@ export function PropertyMap({
              <span>매각기일</span><span>${escapeHtml(fmtDate(p.sale_date))}${dday}</span>
            </div>`;
 
-      // 매수 안전도(0023) 칩 — 점수대별 색. ScoreBadge와 색 통일.
-      const sc = p.scores;
-      const scoreChip = sc
-        ? (() => {
-            const b = sc.score >= 80 ? ["#059669", "안전"]
-              : sc.score >= 65 ? ["#65a30d", "양호"]
-              : sc.score >= 45 ? ["#d97706", "주의"]
-              : ["#dc2626", "위험"];
-            const dim = sc.confidence === "low" ? "opacity:0.6;" : "";
-            return `<span style="${dim}background:${b[0]}1a;color:${b[0]};border:1px solid ${b[0]}40;border-radius:9999px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap" title="매수 안전도 ${sc.score}/100">${b[1]} ${sc.score}${sc.confidence === "low" ? "?" : ""}</span>`;
-          })()
-        : "";
-
       return `
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-          <span style="font-family:monospace;color:#a1a1aa;font-size:11px">${escapeHtml(p.cases?.case_no ?? "-")}${p.maemul_ser > 1 ? ` #${p.maemul_ser}` : ""}</span>
-          <span style="display:flex;gap:4px;align-items:center">${scoreChip}${badge}</span>
-        </div>
-        <div style="font-weight:650;font-size:13px;margin-top:3px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
+        ${withHeader ? headerRowHtml(p) : ""}
+        <div style="font-weight:650;font-size:13px;margin-top:${withHeader ? 3 : 0}px;line-height:1.35;word-break:keep-all;color:#18181b">${escapeHtml(addr)}</div>
         ${subAddr}
         ${buildingNote}
         <div style="height:1px;background:#f0f0f0;margin:9px 0"></div>
@@ -444,19 +470,23 @@ export function PropertyMap({
       const p0 = grp[0];
       const lng = p0.longitude!, lat = p0.latitude!;
 
+      // 팝업 첫 줄(배지 행/건수 제목)을 InfoWindow 헤더로 올려 닫기 X 버튼과
+      // 같은 줄에 배치 — X 버튼 줄이 만들던 상단 공백 제거.
       let html: string;
+      let headerHtml: string;
       let content: HTMLElement;
       if (grp.length === 1) {
-        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0)}</div>`;
+        html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:300px">${cardHtml(p0, false)}</div>`;
+        headerHtml = headerRowHtml(p0, true);
         content = makePin(markerColor(p0)).element;
       } else {
         const shown = grp.slice(0, CLUSTER_LIST_MAX);
         const more = grp.length - shown.length;
         html = `<div style="font-size:12px;line-height:1.5;min-width:240px;max-width:320px;max-height:320px;overflow-y:auto">
-            <div style="font-weight:700;margin-bottom:6px">이 위치에 ${grp.length}건</div>
             ${shown.map((p, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${cardHtml(p)}</div>`).join("")}
             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
           </div>`;
+        headerHtml = `<div style="font-weight:700;font-size:13px;min-width:200px">이 위치에 ${grp.length}건</div>`;
         content = makeCountBadgeEl(grp.length);
       }
       const marker = new google.maps.marker.AdvancedMarkerElement({
@@ -470,6 +500,7 @@ export function PropertyMap({
         if (!iw) return;
         // InfoWindow auto-pan이 idle을 발생시키므로 새로고침 트리거에서 제외
         suppressUntilRef.current = performance.now() + 1200;
+        iw.setHeaderContent(htmlToEl(headerHtml));
         iw.setContent(html);
         iw.open({ map, anchor: marker });
       });
@@ -516,40 +547,51 @@ export function PropertyMap({
       />
       {fill && filterChips}
 
-      {/* 마커 색 legend = 표시 토글 — 좌하단. 켠 분류만 지도에 그림(기본 건물만). */}
-      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border px-2.5 py-1.5 text-caption-sm shadow-sm space-y-0.5">
-        <div className="text-muted-foreground font-medium text-caption-xs uppercase tracking-wide mb-0.5">
-          마커 색 · 클릭 토글
-        </div>
-        {LEGEND_ITEMS.map(({ key, color, label }) => {
-          const on = enabledKeys.has(key);
-          const n = typeCounts[key] ?? 0;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => toggleKey(key)}
-              aria-pressed={on}
-              className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
-            >
-              <span
-                className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                style={{
-                  background: on ? color : "transparent",
-                  border: `1.5px solid ${color}`,
-                }}
-              />
-              <span className={on ? "font-medium" : "text-muted-foreground"}>
-                {label}
-              </span>
-              {n > 0 && (
-                <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
-                  {n.toLocaleString()}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      {/* 마커 색 legend = 표시 토글 — 좌하단. 켠 분류만 지도에 그림(기본 건물만).
+          모바일에선 지도를 가려서 기본 접힘 (헤더 탭으로 펼침). */}
+      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border text-caption-sm shadow-sm">
+        <button
+          type="button"
+          onClick={() => setLegendOverride(!legendOpen)}
+          aria-expanded={legendOpen}
+          className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-muted-foreground font-medium text-caption-xs uppercase tracking-wide"
+        >
+          <span>{legendOpen ? "마커 색 · 클릭 토글" : "마커 색"}</span>
+          <span aria-hidden>{legendOpen ? "▾" : "▸"}</span>
+        </button>
+        {legendOpen && (
+          <div className="px-2.5 pb-1.5 space-y-0.5">
+            {LEGEND_ITEMS.map(({ key, color, label }) => {
+              const on = enabledKeys.has(key);
+              const n = typeCounts[key] ?? 0;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => toggleKey(key)}
+                  aria-pressed={on}
+                  className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+                >
+                  <span
+                    className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{
+                      background: on ? color : "transparent",
+                      border: `1.5px solid ${color}`,
+                    }}
+                  />
+                  <span className={on ? "font-medium" : "text-muted-foreground"}>
+                    {label}
+                  </span>
+                  {n > 0 && (
+                    <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
+                      {n.toLocaleString()}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}
@@ -603,7 +645,8 @@ export function PropertyMap({
           )}
           {loading && <span className="ml-2 text-muted-foreground">불러오는 중…</span>}
         </div>
-        <label className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm flex items-center gap-1.5 cursor-pointer select-none">
+        {/* 모바일: 자동 새로고침이 기본 ON이라 토글 자체를 숨겨 지도 가림 최소화 */}
+        <label className="rounded-md bg-background/95 border px-3 py-1.5 text-xs shadow-sm hidden sm:flex items-center gap-1.5 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={autoMode}
@@ -622,7 +665,8 @@ export function PropertyMap({
             }
           }}
           className={
-            "rounded-md px-3 py-1.5 text-xs border shadow-sm font-medium text-left " +
+            // 원형 선택은 마우스 드래그 전용(터치 미지원) — 모바일에선 숨김
+            "hidden sm:block rounded-md px-3 py-1.5 text-xs border shadow-sm font-medium text-left " +
             (drawMode
               ? "bg-red-600 text-white border-red-600"
               : circle
@@ -647,6 +691,13 @@ export function PropertyMap({
       )}
     </div>
   );
+}
+
+/** InfoWindow headerContent용 — HTML 문자열을 Element로 (string은 plain text로만 렌더됨). */
+function htmlToEl(html: string): HTMLElement {
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  return d;
 }
 
 function escapeHtml(s: string): string {

@@ -47,7 +47,8 @@ export function MapSearchBox({ region, onLocate }: {
   };
 
   return (
-    <div className="rounded-md bg-background/95 border px-2 py-1.5 text-xs shadow-sm w-56">
+    // 모바일 세로모드에선 우상단 필터 버튼과 같은 줄 — 겹치지 않게 폭 축소
+    <div className="rounded-md bg-background/95 border px-2 py-1.5 text-xs shadow-sm w-44 sm:w-56">
       <div className="flex items-center gap-1">
         <input
           value={q}
