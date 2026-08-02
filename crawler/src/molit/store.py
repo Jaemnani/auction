@@ -38,7 +38,8 @@ def usage_nm_to_deal_type(usage_nm: str | None, usage_lcl_cd: str | None) -> str
     if usage_lcl_cd in ("30000", "40000"):  # 차량/기타 — 실거래 대응 없음
         return None
     for pat, t in _USAGE_NM_TO_TYPE:
-        if usage_nm and pat.search(usage_nm):
+        # pandas 경유 호출 시 결측이 NaN(float, truthy)일 수 있음 — str만 매칭
+        if isinstance(usage_nm, str) and pat.search(usage_nm):
             return t
     return None
 

@@ -30,9 +30,10 @@ except ImportError:  # sys.path 순서에 따라 (스크립트가 src 를 넣어
 _AREA_RE = re.compile(r"(\d+(?:\.\d+)?)\s*㎡")
 
 
-def parse_area_m2(text: str | None) -> float | None:
-    """area_summary('… 84.97㎡ …') → 대표 면적. 복수면 최대값(전유+대지 중 큰 쪽)."""
-    if not text:
+def parse_area_m2(text: object) -> float | None:
+    """area_summary('… 84.97㎡ …') → 대표 면적. 복수면 최대값(전유+대지 중 큰 쪽).
+    pandas 결측은 NaN(float, truthy)으로 들어오므로 str 외 입력은 None."""
+    if not isinstance(text, str) or not text:
         return None
     vals = [float(m) for m in _AREA_RE.findall(text)]
     return max(vals) if vals else None
