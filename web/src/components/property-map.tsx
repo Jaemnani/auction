@@ -432,6 +432,16 @@ export function PropertyMap({
       }
 
       const money = (v: number | null | undefined) => escapeHtml(fmtMoneyShort(v ?? null));
+
+      // 낙찰 예상가(0022) — 청구액 행 바로 뒤. region_avg 폴백은 "참고" 표기.
+      const est = p.estimate;
+      const estRow = !isSold && est?.estimated_price != null
+        ? `<div style="display:flex;justify-content:space-between;align-items:baseline;color:#71717a;font-size:11px;margin-top:3px">
+             <span>예상 낙찰가${est.method === "region_avg" ? " <span style=\"color:#a1a1aa\">(참고)</span>" : ""}</span>
+             <span><strong style="color:#0f766e;font-size:12px">${money(est.estimated_price)}</strong>${est.estimated_rate_pct != null ? `<span style="color:#a1a1aa;margin-left:4px">(${est.estimated_rate_pct}%)</span>` : ""}</span>
+           </div>`
+        : "";
+
       const priceBlock = isSold
         ? `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
              <span style="color:#71717a;font-size:11px">낙찰가</span>
@@ -448,6 +458,7 @@ export function PropertyMap({
              </span>
            </div>
            ${p.cases?.claim_amount ? `<div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px"><span>청구액</span><span>${money(p.cases.claim_amount)}</span></div>` : ""}
+           ${estRow}
            <div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px">
              <span>매각기일</span><span>${escapeHtml(fmtDate(p.sale_date))}${dday}</span>
            </div>`;

@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
-import type { Property, PropertyDetail, PropertyFilters, PropertyScoreBrief } from "./types";
+import type { Property, PropertyDetail, PropertyEstimateBrief, PropertyFilters, PropertyScoreBrief } from "./types";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -145,6 +145,41 @@ async function fetchScoresByIds(
 async function attachScores<T extends Property>(rows: T[]): Promise<T[]> {
   const scores = await fetchScoresByIds(rows.map((r) => r.id));
   for (const r of rows) r.scores = scores[r.id] ?? null;
+  return rows;
+}
+
+// 낙찰 예상가 (0022) — 점수와 동일한 별도 attach 패턴 (0022 미적용/미예측 시 degrade).
+// 지도 팝업 표시용 요약 컬럼만 조회.
+async function fetchEstimatesByIds(
+  ids: string[],
+): Promise<Record<string, PropertyEstimateBrief>> {
+  const out: Record<string, PropertyEstimateBrief> = {};
+  if (ids.length === 0) return out;
+  const CHUNK = 150; // uuid .in_() 150 초과 시 NAS nginx 414 (memo 주의사항)
+  try {
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await supabase
+        .from("property_estimates")
+        .select("property_id, estimated_price, estimated_rate_pct, method")
+        .in("property_id", ids.slice(i, i + CHUNK));
+      if (error) return out;  // 0022 미적용 등 — 예상가 없이 진행
+      for (const r of (data ?? []) as Array<{ property_id: string } & PropertyEstimateBrief>) {
+        out[r.property_id] = {
+          estimated_price: r.estimated_price,
+          estimated_rate_pct: r.estimated_rate_pct,
+          method: r.method,
+        };
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+async function attachEstimates<T extends Property>(rows: T[]): Promise<T[]> {
+  const estimates = await fetchEstimatesByIds(rows.map((r) => r.id));
+  for (const r of rows) r.estimate = estimates[r.id] ?? null;
   return rows;
 }
 
@@ -603,6 +638,7 @@ export async function fetchPropertiesForMap(
         && r.longitude >= 124 && r.longitude <= 132.5
         && r.latitude  >= 33  && r.latitude  <= 39,
       );
-  await attachScores(out);  // 매수 안전도(0023) — 실패 시 점수 없이 진행
+  // 안전도(0023)·예상가(0022) attach — 각각 실패 시 해당 값 없이 진행
+  await Promise.all([attachScores(out), attachEstimates(out)]);
   return out;
 }

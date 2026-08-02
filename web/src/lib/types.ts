@@ -31,6 +31,13 @@ export type PropertyScoreBrief = {
   } | null;
 };
 
+// 낙찰 예상가 (0022) — property_estimates. 지도 팝업 표시용 요약 (상세 카드는 전체 컬럼).
+export type PropertyEstimateBrief = {
+  estimated_price: number | null;
+  estimated_rate_pct: number | null;
+  method: "model" | "region_avg";
+};
+
 export type Property = {
   id: string;
   case_id: string;
@@ -78,6 +85,7 @@ export type Property = {
   spcfc_ecdoc_id?: string | null;
   property_photos?: Array<{ seq: number; storage_path: string | null }> | null;
   scores?: PropertyScoreBrief | null;   // 매수 안전도 (0023) — 임베드, 미채점이면 null
+  estimate?: PropertyEstimateBrief | null; // 낙찰 예상가 (0022) — 지도 attach, 미예측이면 null
   cases: {
     id: string;
     court_code: string;
