@@ -268,6 +268,12 @@ if [ -n "${GEMINI_API_KEY:-}" ]; then
 fi
 # (close-aged는 위 3)으로 이동 — detail 백필 백로그에 굶지 않도록 search 직후 실행)
 
+# 9.4) 최저가 보정 — 검색 API 의 stale minmaePrice(유찰 후 미갱신)를 상세 기일
+#      일정(property_sale_dates) 현재 회차 값으로 동기화 (0024 RPC). DB-only 수 초.
+#      반드시 검색 수집(위 단계들) 이후 + estimate-predict 이전 — 검색 재스캔이
+#      stale 값을 다시 쓰고, 예측 모델의 min_rate 피처가 이 값을 먹기 때문.
+step "sync-min-price" crawler/scripts/ingest.py sync-min-price
+
 # 9.5) 낙찰 예상가 배치 예측 — property_estimates upsert (0022). DB-only 수 분.
 #      모델은 주 1회 학습(install_cron.sh estimator-train 라인) — 모델 없으면
 #      지역 평균 매각가율 폴백으로 예측.

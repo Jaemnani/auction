@@ -1084,6 +1084,19 @@ class Store:
 
     # ---------- crawl runs / dead letters ----------
 
+    def sync_min_sale_price(self) -> int:
+        """검색 API stale 최저가 보정 — 0024 RPC 호출.
+
+        법원 검색 API 의 minmaePrice 는 유찰 후에도 이전 회차 값이 남을 수 있음
+        (실측 2026타경30547). 상세 기일 일정(property_sale_dates)의 현재 예정
+        회차 min_price 로 properties.min_sale_price 를 맞춘다. 검색 재스캔이
+        stale 값을 다시 쓸 수 있어 run_daily 에서 검색 수집 이후 매일 호출.
+        """
+        r = self.sb.rpc("sync_min_sale_price_from_schedule").execute()
+        n = int(r.data or 0)
+        logger.info("synced min_sale_price for %d properties from sale schedule", n)
+        return n
+
     def start_run(self, job_type: str, params: dict | None = None) -> str:
         r = self.sb.table("crawl_runs").insert(
             {"job_type": job_type, "params": params or {}, "status": "running"}

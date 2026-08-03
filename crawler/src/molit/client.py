@@ -143,7 +143,9 @@ class MolitClient:
         resp = (body or {}).get("response") or {}
         header = resp.get("header") or {}
         code = _s(header.get("resultCode"))
-        if code and code not in ("00", "0"):
+        # 성공 코드는 API 마다 자릿수가 다름 — BR(건축HUB)=00, RTMS(실거래)=000.
+        # 전부 0으로만 이루어진 코드는 성공으로 취급 (00/0/000).
+        if code and code.strip("0") != "":
             raise MolitError(
                 f"API error {code}: {_s(header.get('resultMsg'))}")
         b = resp.get("body") or {}

@@ -137,6 +137,8 @@ def cmd_predict(args: argparse.Namespace) -> None:
     train_df = data.fetch_training_rows()
     seg = data.segment_counts(train_df) if not train_df.empty else {}
     stats = data.region_avg_rate()
+    # 기일 일정 — 도메인 클램프 근거 (아래 주석 참조)
+    sched = data.sale_schedule_map()
 
     if model is not None:
         preds = model.predict(X)
@@ -148,7 +150,7 @@ def cmd_predict(args: argparse.Namespace) -> None:
 
     now_iso = datetime.now(timezone.utc).isoformat()
     payload: list[dict] = []
-    n_model = n_fallback = n_skip = 0
+    n_model = n_fallback = n_skip = n_clamped = 0
     for i, row in df.reset_index(drop=True).iterrows():
         appraisal = float(row["appraisal_amount"])
         sgg_key = (str(row.get("sgg_code") or ""), str(row.get("usage_lcl_cd") or ""))
@@ -174,12 +176,38 @@ def cmd_predict(args: argparse.Namespace) -> None:
             method = "region_avg"
             n_fallback += 1
 
+        # ---- 도메인 클램프 (경매 절차 제약) ----
+        # 하한: 현재 회차 최저매각가 — 그 밑 입찰은 무효라 낙찰가가 될 수 없음.
+        # 상한: 이전 회차(현재 sale_date 보다 이른) 최저가 중 최솟값 — 그 가격에
+        #       유찰됐다 = 그 가격 낼 사람이 없었다. 모델 외삽이 유찰가 위로
+        #       나가는 것 방지 (실측: 6.34억 유찰 매물에 6.49억 예측 사고).
+        est = rate * appraisal
+        lo_p, hi_p = lo * appraisal, hi * appraisal
+        cur_min = row.get("min_sale_price")
+        floor = float(cur_min) if cur_min is not None and not pd.isna(cur_min) \
+            and float(cur_min) > 0 else None
+        cur_date = str(row.get("sale_date") or "")
+        prior = [mp for (d, mp) in sched.get(row["property_id"], [])
+                 if cur_date and d < cur_date]
+        ceiling = min(prior) if prior else None
+        if floor is not None and ceiling is not None and ceiling < floor:
+            ceiling = None  # 재매각 등으로 가격이 리셋된 사이클 — 이전 회차 상한 무효
+        raw_est = est
+        if ceiling is not None:
+            est, hi_p = min(est, ceiling), min(hi_p, ceiling)
+            lo_p = min(lo_p, est)
+        if floor is not None:
+            est, lo_p = max(est, floor), max(lo_p, floor)
+            hi_p = max(hi_p, est)
+        if est != raw_est:
+            n_clamped += 1
+
         payload.append({
             "property_id": row["property_id"],
-            "estimated_price": round(rate * appraisal),
-            "estimated_low": round(lo * appraisal),
-            "estimated_high": round(hi * appraisal),
-            "estimated_rate_pct": round(rate * 100, 1),
+            "estimated_price": round(est),
+            "estimated_low": round(lo_p),
+            "estimated_high": round(hi_p),
+            "estimated_rate_pct": round(est / appraisal * 100, 1),
             "method": method,
             "model_version": model.version if (model and method == "model") else None,
             "sample_count": samples,
@@ -198,8 +226,8 @@ def cmd_predict(args: argparse.Namespace) -> None:
             sys.exit(1)
         raise
     print(f"[done] predict — saved={len(payload)} (model={n_model} "
-          f"region_avg={n_fallback} skip={n_skip}) of {len(df)} active "
-          f"({time.monotonic() - started:.0f}s)")
+          f"region_avg={n_fallback} skip={n_skip} clamped={n_clamped}) "
+          f"of {len(df)} active ({time.monotonic() - started:.0f}s)")
 
 
 def main() -> None:

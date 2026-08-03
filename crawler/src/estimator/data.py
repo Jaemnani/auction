@@ -149,6 +149,23 @@ class EstimatorData:
 
     # ---------- 예측 대상 ----------
 
+    def sale_schedule_map(self) -> dict[str, list[tuple[str, float]]]:
+        """property_id → [(sale_date, min_price)] — 예측 클램프용 기일 일정.
+
+        현재 회차 이전(sale_date 가 더 이른) 회차의 최저가는 "그 가격에 유찰됐다"
+        는 뜻이므로 예측 상한 근거가 된다. (property_id, seq) 유니크 정렬로
+        페이지 경계 스킵 방지."""
+        rows = _page_all(lambda: self.sb.table("property_sale_dates")
+                         .select("property_id, sale_date, min_price")
+                         .gt("min_price", 0)
+                         .not_.is_("sale_date", "null")
+                         .order("property_id").order("seq"))
+        out: dict[str, list[tuple[str, float]]] = {}
+        for r in rows:
+            out.setdefault(r["property_id"], []).append(
+                (str(r["sale_date"]), float(r["min_price"])))
+        return out
+
     def fetch_active_rows(self, limit: int | None = None) -> pd.DataFrame:
         """활성 매물 (deleted_at null, 감정가 있음)."""
         def q():

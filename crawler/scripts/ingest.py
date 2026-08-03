@@ -723,6 +723,35 @@ async def cmd_finalize_sold(args: argparse.Namespace) -> None:
         raise
 
 
+# ---------- sync min_sale_price ----------
+
+async def cmd_sync_min_price(args: argparse.Namespace) -> None:
+    """검색 API stale 최저가 보정 (0024 RPC).
+
+    법원 검색 API 의 minmaePrice 가 유찰 후에도 이전 회차 값으로 남는 경우가
+    있어(갱신 지연), 상세 기일 일정(property_sale_dates)의 현재 예정 회차
+    min_price 로 properties.min_sale_price 를 동기화. 검색 재스캔이 stale 값을
+    다시 쓸 수 있으므로 run_daily 가 검색 수집 이후(estimate-predict 전) 매일 호출.
+    """
+    del args
+    store = Store()
+    run_id = store.start_run("sync_min_price")
+    started = time.monotonic()
+    try:
+        n = store.sync_min_sale_price()
+        store.finish_run(run_id, totals={"updated": n})
+        print(f"[done] synced min_sale_price for {n} properties "
+              f"({time.monotonic() - started:.1f}s)")
+    except Exception as e:
+        store.finish_run(run_id, status="failed", error=str(e))
+        if "PGRST202" in str(e) or "Could not find the function" in str(e):
+            print("[fatal] sync_min_sale_price_from_schedule() 함수 없음 — "
+                  "0024_sync_min_sale_price.sql 을 NAS psql 로 먼저 적용하세요",
+                  file=sys.stderr)
+            sys.exit(1)
+        raise
+
+
 # ---------- backfill derived_category ----------
 
 async def cmd_backfill_categories(args: argparse.Namespace) -> None:
@@ -1184,6 +1213,10 @@ def main() -> None:
                           help="soft-delete 매물을 sale_results와 매칭해 낙찰/비낙찰 확정 (0018)")
     p_fs.add_argument("--dry-run", action="store_true", help="매칭 카운트만 표시")
     p_fs.set_defaults(func=cmd_finalize_sold)
+
+    p_smp = sub.add_parser("sync-min-price",
+                           help="검색 API stale 최저가를 기일 일정 기준으로 보정 (0024 RPC)")
+    p_smp.set_defaults(func=cmd_sync_min_price)
 
     p_un = sub.add_parser("backfill-usage-nm",
                           help="기존 매물의 search_row.dspslUsgNm → properties.usage_nm 복사 (0013 직후 1회)")
