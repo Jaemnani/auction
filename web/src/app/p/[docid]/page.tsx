@@ -1,8 +1,10 @@
 import { notFound } from "next/navigation";
 import nextDynamic from "next/dynamic";
 import {
-  fetchCodeNames, fetchProperty, fetchRegionStats, fetchRegionalSaleCases, photoPublicUrl,
+  fetchCodeNames, fetchEstimate, fetchProperty, fetchRegionStats, fetchRegionalSaleCases,
+  photoPublicUrl,
 } from "@/lib/queries";
+import { AEE_LABELS, DETAIL_FIELD_LABELS } from "@/lib/kr-detail-labels";
 
 // MolitDeals — 클라이언트 fetch 컴포넌트. 청크 분리로 초기 JS 페이로드 축소.
 const MolitDeals = nextDynamic(() => import("@/components/molit-deals").then((m) => ({ default: m.MolitDeals })));
@@ -90,8 +92,11 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
   const dept = cs?.jdbn_name ?? "";
   const courtPlusDept = [courtName, dept].filter(Boolean).join(" · ");
 
+  // 낙찰 예상가 (0022) — 1회 조회해 카드와 Markdown 내보내기에 공유
+  const estimate = p.final_result !== "sold" ? await fetchEstimate(p.id) : null;
+
   // Markdown export
-  const markdown = buildKrMarkdown(p, names, photos.map((ph) => ph.url));
+  const markdown = buildKrMarkdown(p, names, photos.map((ph) => ph.url), estimate);
   const mdFilename = `auction_${(cs?.case_no ?? p.docid ?? "kr")
     .replace(/[^\w\-]+/g, "_")
     .slice(0, 80)}`;
@@ -164,9 +169,7 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
       <ScoreCard score={p.scores} />
 
       {/* 낙찰 예상가 (0022) — 진행중 매물만 (낙찰 완료면 실제 낙찰가가 위 배너에 있음) */}
-      {p.final_result !== "sold" && (
-        <EstimateCard propertyId={p.id} appraisalAmount={p.appraisal_amount} />
-      )}
+      <EstimateCard estimate={estimate} appraisalAmount={p.appraisal_amount} />
 
       {/* 물건기본내역 */}
       <Card>
@@ -358,35 +361,7 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 }
 
 // 감정평가 요항 항목코드 → 한글 라벨 (한국감정원 표준 16개 항목)
-const AEE_LABELS: Record<string, string> = {
-  "00083001": "위치 / 인근 환경",
-  "00083002": "교통",
-  "00083003": "교통",
-  "00083004": "주위 환경",
-  "00083005": "도로 인접",
-  "00083006": "이용 상태",
-  "00083007": "공법상 규제",
-  "00083008": "이용 상태",
-  "00083009": "토지 형상·지세",
-  "00083010": "토지 명세",
-  "00083011": "도시계획 / 용도지역",
-  "00083012": "토지 이용 계획",
-  "00083013": "건물 명세",
-  "00083014": "건물 명세",
-  "00083015": "건물 구조",
-  "00083016": "건물 설비",
-  "00083017": "부대 설비",
-  "00083018": "위반 건축물",
-  "00083019": "기타",
-  "00083020": "임대 관계",
-  "00083021": "임대 관계",
-  "00083022": "임대 관계",
-  "00083023": "기타 참고사항",
-  "00083024": "기타 참고사항",
-  "00083025": "임대 관계",
-  "00083026": "임대 관계",
-  "00083027": "감정평가 의견",
-};
+// AEE_LABELS / DETAIL_FIELD_LABELS 는 @/lib/kr-detail-labels 로 이동 (md 내보내기와 공유)
 
 // 용도 코드 → MOLIT 실거래가 API 유형 매핑
 // courtauction lclsUtilCd (대분류): 10000=토지, 20000=건물, 30000=차량, 40000=기타
@@ -723,18 +698,6 @@ function KvGrid({ items }: { items: [string, React.ReactNode][] }) {
   );
 }
 
-// 상세 목록(등기부/임차인/매각대상물) 항목의 스칼라 필드 → 한글 라벨.
-// 알려진 키만 매핑, 나머지는 원본 키 노출 (필드명 불확실성에 안전).
-const DETAIL_FIELD_LABELS: Record<string, string> = {
-  // 임차인 (gdsRletStLtnoLstAll)
-  rletStLtnoAddr: "소재지", rdnmRefcAddr: "도로명주소", auctnLstDvsCd: "구분",
-  mclDspslGdsLstUsgCd: "용도",
-  // 등기부·토지 (rgltLandLstAll)
-  rgltLandLtnoAddr: "소재지", landArDts: "면적", auctnRgltKndCd: "권리종류",
-  rgltDvsDts: "구분",
-  // 매각대상물 (gdsDspslObjctLst)
-  pjbBuldList: "건물내역", objctArDts: "면적", bldNm: "건물명", ldcgDts: "지목",
-};
 
 function DetailListCard({ title, items }: {
   title: string; items: Array<Record<string, unknown>>;

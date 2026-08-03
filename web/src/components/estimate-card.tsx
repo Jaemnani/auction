@@ -1,19 +1,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fmtMoney } from "@/lib/format";
-import { fetchEstimate } from "@/lib/queries";
+import type { PropertyEstimate } from "@/lib/queries";
 
 /**
  * 낙찰 예상가 카드 (서버 컴포넌트) — property_estimates(0022) 배치 예측 결과.
  * method='model': LightGBM quantile 회귀 (범위 = 10~90% 분위)
  * method='region_avg': 지역 평균 매각가율 폴백 (±15% 밴드) — 참고용 경고 표시.
+ * 데이터는 부모(page)가 fetchEstimate 로 1회 조회해 전달 — Markdown 내보내기와 공유.
  */
-export async function EstimateCard({
-  propertyId, appraisalAmount,
+export function EstimateCard({
+  estimate, appraisalAmount,
 }: {
-  propertyId: string;
+  estimate: PropertyEstimate | null;
   appraisalAmount: number | null;
 }) {
-  const e = await fetchEstimate(propertyId);
+  const e = estimate;
   if (!e || e.estimated_price == null) return null;
 
   const lowConfidence = e.method === "region_avg" || (e.sample_count ?? 0) < 30;
