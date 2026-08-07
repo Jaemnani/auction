@@ -216,7 +216,50 @@ tel, jiwonNm, jpDeptNm                                법원 연락
 
 ### Generic blob (PDF/이미지 다운로드 추정)
 
-`/pgj/pgjComm/000Blob.on` — 공지사항/서식/안내 등 공통 blob endpoint. 매각물건명세서 등도 같은 endpoint로 docId 기반 다운로드일 가능성. **추후 PGJ15BM01의 doc download 로직 분석 필요**.
+`/pgj/pgjComm/000Blob.on` — 공지사항/서식/안내 등 공통 blob endpoint. 매각물건명세서와는 **무관**(아래 참조). 이 endpoint 에 ecdocId/orvParam 을 어떤 조합으로 줘도 `302 → /pgj/index.on` 으로 흘려보낸다 (실측 2026-08).
+
+### 매각물건명세서 — 정찰 완료 (2026-08-08)
+
+**결론: 계약은 완전히 해독했으나 서버측 봇 차단으로 자동 수집 불가.** 화면 정의(`/pgj/ui/pgj100/PGJ15BM01.xml` — 모듈 디렉토리가 `pgj15B` 가 아니라 **`pgj100`**)에서 전체 흐름을 추출했다.
+
+**호출 계약**
+
+```
+POST /pgj/pgj15B/insertDspslGdsSpecArtcWdrwInf.on
+body: {"dma_dspslGdsSpecLog": {
+    cortOfcCd, csNo, dspslGdsSeq,          // detail 응답 dspslGdsDxdyInfo 그대로
+    orvParam,                              // 132자 암호화 파라미터 (detail 응답)
+    dspslGdsSpcfcEcdocId,                  // 명세서 전자문서 ID (detail 응답)
+    cortAuctnMbrsId: "NONUSER",            // 비로그인
+    docFlag: "1"                           // 1=매각물건명세서
+}}
+resp: data.dma_dspslSpcfcInfo = { scsYn, encParam, url }
+```
+
+이어서 뷰어를 연다 (`com.str.serialize` = `JSON.stringify` 실측 확인):
+
+```
+{url}?paramData={base64(JSON.stringify({encParam, pspTkn:"NA", pspSid:"NA"}))}
+→ https://ecfs.scourt.go.kr/sgvo/websquare/websquare.html?w2xPath=/sgvo/ui/sgvo200/SGVO201M01.xml?paramData=...
+```
+
+**공개 시점 제약 (제품 설계에 직결)** — 사이트 안내문 + 화면 코드 양쪽 확인:
+
+| 서류 | 공개 시점 |
+|---|---|
+| 매각물건명세서 | 매각기일 **1주 전**부터 |
+| 현황조사서 · 감정평가서 | 매각기일 **2주 전**부터 |
+
+화면 코드 조건: `realMulKind==='1' && orvParam 존재 && ((bidDvsCd==='000331' && 오늘 >= 기일-7) || (bidDvsCd==='000332' && 기간입찰 창))`. 즉 **전체 매물의 극히 일부(기일 임박분)만 명세서가 존재**한다.
+
+**차단 실측**
+
+- 브라우저(실사용자 흐름): `200` + 뷰어 탭 정상 오픈 → endpoint 는 살아있음
+- 서버측 httpx 클라이언트: 페이로드·헤더(Referer w2xPath / SC-Pgm-Id / submissionid) 9종 조합 전부 `500` generic error
+- detail endpoint 는 같은 세션에서 `200` + `data.ipcheck: true` 였으므로 **insert endpoint 만 별도의 더 엄격한 봇 판정**을 두는 것으로 보임
+- 정찰 누적 후 detail 까지 차단됨: `{"status":200, "message":"해당 IP는 비정상적인 접속으로 보안정책에의하여 차단되었습니다.", "data":{"ipcheck":false}}`
+
+**판단** — 자동 수집은 (a) 성공률 불확실 (b) 크롤러 본체(검색·상세)까지 IP 차단으로 마비시킬 위험이 크다. 명세서는 **사용자가 공식 사이트에서 직접 열람**하고, 우리는 그 값을 입력받아 계산(인수액 계산기)하는 현재 구조를 유지한다. 재시도할 경우 반드시 별도 IP·별도 세션·기일 임박 매물 한정으로.
 
 ## 코드 체계
 
@@ -244,9 +287,11 @@ tel, jiwonNm, jpDeptNm                                법원 연락
 
 ## 미해결 / 다음 발굴 항목
 
-1. **매각물건명세서** (인수권리/임차인 — 권리분석 핵심) — PGJ15BM01의 sub-frame 또는 별도 popup일 가능성
-2. **현황조사서** PDF 다운로드 endpoint
-3. **감정평가서** 원본 PDF 다운로드 endpoint
+1. ~~**매각물건명세서**~~ — **정찰 완료 (2026-08-08)**, 위 "매각물건명세서" 섹션 참조.
+   계약 해독 완료 / 봇 차단으로 자동 수집 보류
+2. **현황조사서** PDF 다운로드 endpoint — 명세서와 같은 `insertDspslGdsSpecArtcWdrwInf.on`
+   에 `docFlag` 를 달리 주는 구조로 추정 (미검증, 차단 위험으로 중단)
+3. **감정평가서** 원본 PDF 다운로드 endpoint — 동상
 4. **사진 원본 URL** — `selectPicInf.on` 응답에 base64인지 별도 URL인지 확인
 5. `cortAuctnSrchCondCd` 값별 의미 (0004601 / 0004603 / 0004604)
 6. 동산(`O` prefix) 법원 목록의 실제 차이
