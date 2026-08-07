@@ -20,6 +20,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { EstimateCard } from "@/components/estimate-card";
+import { AssumptionCalculator } from "@/components/assumption-calculator";
 import { ScoreCard } from "@/components/score-badge";
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
@@ -94,6 +95,16 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 
   // 낙찰 예상가 (0022) — 1회 조회해 카드와 Markdown 내보내기에 공유
   const estimate = p.final_result !== "sold" ? await fetchEstimate(p.id) : null;
+
+  // 인수액 계산기 프리필 — 말소기준권리 후보 + 배당요구종기(YYYYMMDD→ISO) + 공식 링크
+  const lienInfo = parsePrimaryLien(p.primary_liens);
+  const demandRaw = String((dstrtDemn as Record<string, unknown>).dstrtDemnLstprdYmd ?? "");
+  const demandDeadline = /^\d{8}$/.test(demandRaw)
+    ? `${demandRaw.slice(0, 4)}-${demandRaw.slice(4, 6)}-${demandRaw.slice(6, 8)}`
+    : null;
+  const officialCaseUrl = cs?.court_code && cs?.case_no
+    ? courtauctionLink(cs.court_code, cs.case_no)
+    : null;
 
   // Markdown export
   const markdown = buildKrMarkdown(p, names, photos.map((ph) => ph.url), estimate);
@@ -170,6 +181,18 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 
       {/* 낙찰 예상가 (0022) — 진행중 매물만 (낙찰 완료면 실제 낙찰가가 위 배너에 있음) */}
       <EstimateCard estimate={estimate} appraisalAmount={p.appraisal_amount} />
+
+      {/* 인수액 계산기 — 매각물건명세서 값 입력 → 낙찰가별 인수액·실질 취득원가 */}
+      {p.final_result !== "sold" && (
+        <AssumptionCalculator
+          appraisal={p.appraisal_amount}
+          minPrice={p.min_sale_price}
+          lienDate={lienInfo?.date ?? null}
+          lienType={lienInfo?.type ?? null}
+          demandDeadline={demandDeadline}
+          officialUrl={officialCaseUrl}
+        />
+      )}
 
       {/* 물건기본내역 */}
       <Card>
