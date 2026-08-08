@@ -45,7 +45,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-PYTHON="${PYTHON:-/Users/ohyeahdani_m1/workspace/venv_common/bin/python}"
+# 공용 venv — 머신마다 홈이 다르므로 $HOME 기준 (install_cron.sh 와 동일 규칙)
+PYTHON="${PYTHON:-$HOME/workspace/venv_common/bin/python}"
 LOG_DIR="$PROJECT_ROOT/crawler/data/logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/daily_$(date +%Y%m%d_%H%M%S).log"

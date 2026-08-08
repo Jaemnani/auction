@@ -24,7 +24,10 @@ MARKER="# courtauction-daily"        # 우리가 추가한 line을 식별
 # 예측(predict)은 run_daily.sh 가 매일 수행 — 여기선 train+evaluate 만.
 TRAIN_SCHEDULE="${TRAIN_SCHEDULE:-0 3 * * 0}"
 TRAIN_MARKER="# auction-estimator-train"
-PYTHON_BIN="${PYTHON:-/Users/jaemoonyeah/workspace/venv_common/bin/python}"
+# 공용 venv — 머신마다 홈이 다르므로 $HOME 기준으로 해석 (개발 Mac/크롤러 iMac 공통).
+# (이전엔 개발 Mac 경로가 하드코딩돼 iMac 에 설치하면 주간 학습 크론이 없는 python 을
+#  가리켜 조용히 실패했음. run_daily.sh 의 기본값과 불일치했던 버그.)
+PYTHON_BIN="${PYTHON:-$HOME/workspace/venv_common/bin/python}"
 ESTIMATE_SCRIPT="$SCRIPT_DIR/scripts/estimate.py"
 
 # env 변수 prefix 만들기 (있는 것만)
