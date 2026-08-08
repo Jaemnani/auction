@@ -14,6 +14,10 @@ import {
   containerPxToLatLng,
   makePin,
 } from "@/lib/google-maps";
+import {
+  getAssumptions, subscribeAssumptions, getAssumptionsVersion,
+  getAssumptionsVersionServer,
+} from "@/lib/assumption-store";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
 
@@ -139,6 +143,10 @@ export function PropertyMap({
     subscribeDesktopMq,
     () => window.matchMedia(DESKTOP_MQ).matches,
     () => false,
+  );
+  // 인수액 저장 버전 — 상세에서 저장/삭제하면 팝업 HTML 재생성 (아래 마커 effect deps)
+  const assumptionVersion = useSyncExternalStore(
+    subscribeAssumptions, getAssumptionsVersion, getAssumptionsVersionServer,
   );
   const [legendOverride, setLegendOverride] = useState<boolean | null>(null);
   const legendOpen = legendOverride ?? isDesktop;
@@ -378,6 +386,9 @@ export function PropertyMap({
 
     if (visiblePoints.length === 0) return;
 
+    // 상세 계산기에서 저장한 인수액 (브라우저 로컬) — 마커 렌더 시 1회 조회.
+    const assumptions = getAssumptions(visiblePoints.map((p) => p.id));
+
     // 사건번호 + (안전도·낙찰/하락%) 배지 행 — 카드 첫 줄.
     const headerRowHtml = (p: Property) => {
       const isSold = p.final_result === "sold";
@@ -433,7 +444,17 @@ export function PropertyMap({
 
       const money = (v: number | null | undefined) => escapeHtml(fmtMoneyShort(v ?? null));
 
-      // 낙찰 예상가(0022) — 청구액 행 바로 뒤. region_avg 폴백은 "참고" 표기.
+      // 인수액 — 상세 계산기에서 저장한 값(브라우저 로컬)만 표시. 미저장이면 줄 자체를 비움.
+      // (청구액은 낙찰자 부담이 아니라 배당 대상이라 지도에서 제외 — 상세에만 표시)
+      const asm = assumptions[p.id];
+      const assumedRow = !isSold && asm
+        ? `<div style="display:flex;justify-content:space-between;align-items:baseline;color:#71717a;font-size:11px;margin-top:3px">
+             <span>인수액</span>
+             <span><strong style="color:${asm.assumed > 0 ? "#dc2626" : "#15803d"};font-size:12px">${money(asm.assumed)}</strong><span style="color:#a1a1aa;margin-left:4px">(낙찰 ${money(asm.bid)} 기준)</span></span>
+           </div>`
+        : "";
+
+      // 낙찰 예상가(0022) — region_avg 폴백은 "참고" 표기.
       const est = p.estimate;
       const estRow = !isSold && est?.estimated_price != null
         ? `<div style="display:flex;justify-content:space-between;align-items:baseline;color:#71717a;font-size:11px;margin-top:3px">
@@ -457,7 +478,7 @@ export function PropertyMap({
                ${p.appraisal_amount ? `<span style="color:#a1a1aa;font-size:10px;text-decoration:line-through;margin-left:5px">${money(p.appraisal_amount)}</span>` : ""}
              </span>
            </div>
-           ${p.cases?.claim_amount ? `<div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px"><span>청구액</span><span>${money(p.cases.claim_amount)}</span></div>` : ""}
+           ${assumedRow}
            ${estRow}
            <div style="display:flex;justify-content:space-between;color:#71717a;font-size:11px;margin-top:3px">
              <span>매각기일</span><span>${escapeHtml(fmtDate(p.sale_date))}${dday}</span>
@@ -513,7 +534,8 @@ export function PropertyMap({
     // bbox refresh로 들어온 새 rows에도 fit 안 함 (사용자 viewport 유지)
     // unit 변경 시에도 popup 재생성 — popup HTML이 unit에 의존
     // 토글 변경(visiblePoints) 시에도 재생성 — 꺼진 분류 마커 제거
-  }, [visiblePointsKey, unit, mapReady]);
+    // assumptionVersion 변경(인수액 저장/삭제) 시에도 재생성 — 팝업의 인수액 줄 갱신
+  }, [visiblePointsKey, unit, mapReady, assumptionVersion]);
 
   if (!GOOGLE_MAPS_API_KEY || mapError) {
     return <MapKeyNotice error={mapError} className="h-[480px]" />;

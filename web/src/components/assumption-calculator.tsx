@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,6 +11,10 @@ import {
   hasOpposability, simulate, scenarioBids, estimateAuctionCost,
   type AssumptionInputs,
 } from "@/lib/assumption";
+import {
+  getAssumption, saveAssumption, clearAssumption, subscribeAssumptions,
+  getAssumptionsVersion, getAssumptionsVersionServer, type AssumptionRecord,
+} from "@/lib/assumption-store";
 
 /**
  * 인수액 계산기 (대항력 임차인) — 매각물건명세서 값을 입력하면 낙찰가별
@@ -21,8 +25,10 @@ import {
  * 매각물건명세서 PDF(공식 사이트)에서 확인 후 입력해야 한다.
  */
 export function AssumptionCalculator({
-  appraisal, minPrice, lienDate, lienType, demandDeadline, officialUrl,
+  propertyId, appraisal, minPrice, lienDate, lienType, demandDeadline, officialUrl,
 }: {
+  /** 계산 결과를 로컬 저장할 키 — 지도 팝업이 같은 키로 읽는다 */
+  propertyId: string;
   appraisal: number | null;
   minPrice: number | null;
   /** 말소기준권리 후보 일자 (YYYY-MM-DD) — parsePrimaryLien */
@@ -79,6 +85,25 @@ export function AssumptionCalculator({
     () => (deposit > 0 ? bids.map((b) => simulate(inputs, b)) : []),
     [inputs, bids, deposit],
   );
+
+  // 저장 대상 행 — 내 입찰가를 넣었으면 그 행, 아니면 최저가(첫 행).
+  const customBid = man(customBidMan);
+  const baseRow = rows.find((r) => customBid > 0 && r.bid === customBid) ?? rows[0] ?? null;
+
+  // 저장된 값 (지도 팝업이 읽는 것과 동일 소스). 버전 구독이라 저장·다른 탭 변경에 반응.
+  const version = useSyncExternalStore(
+    subscribeAssumptions, getAssumptionsVersion, getAssumptionsVersionServer,
+  );
+  const saved: AssumptionRecord | null = useMemo(
+    () => (version < 0 ? null : getAssumption(propertyId)),
+    [propertyId, version],
+  );
+
+  const doSave = () => {
+    if (!baseRow) return;
+    saveAssumption(propertyId, { assumed: baseRow.assumed, bid: baseRow.bid, opposable });
+  };
+  const doClear = () => clearAssumption(propertyId);
 
   const inputCls =
     "w-full rounded-md border bg-background px-2 py-1 text-sm";
@@ -239,8 +264,14 @@ export function AssumptionCalculator({
                 </TableHeader>
                 <TableBody>
                   {rows.map((r) => (
-                    <TableRow key={r.bid}>
-                      <TableCell className="text-right tabular-nums">{fmtMoney(r.bid)}</TableCell>
+                    <TableRow key={r.bid}
+                              className={baseRow && r.bid === baseRow.bid ? "bg-muted/50" : ""}>
+                      <TableCell className="text-right tabular-nums">
+                        {fmtMoney(r.bid)}
+                        {baseRow && r.bid === baseRow.bid && (
+                          <span className="ml-1.5 text-caption-xs text-muted-foreground">기준</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
                         {fmtMoney(r.dividend)}
                       </TableCell>
@@ -255,6 +286,35 @@ export function AssumptionCalculator({
                   ))}
                 </TableBody>
               </Table>
+
+              {/* 저장 — 지도 팝업이 이 값을 읽는다 (localStorage, 이 브라우저 한정) */}
+              <div className="flex flex-wrap items-center gap-2 pt-3 text-xs">
+                <button
+                  type="button"
+                  onClick={doSave}
+                  disabled={!baseRow}
+                  className="rounded-md border bg-primary text-primary-foreground px-3 py-1.5 font-medium disabled:opacity-50"
+                >
+                  기준 인수액을 지도에 표시
+                </button>
+                {saved && (
+                  <>
+                    <span className="text-muted-foreground">
+                      저장됨: <strong className={saved.assumed > 0 ? "text-red-600" : "text-green-700"}>
+                        {fmtMoney(saved.assumed)}
+                      </strong> (낙찰가 {fmtMoney(saved.bid)} 기준)
+                    </span>
+                    <button type="button" onClick={doClear}
+                            className="text-muted-foreground underline hover:text-foreground">
+                      지우기
+                    </button>
+                  </>
+                )}
+                <span className="text-caption-xs text-muted-foreground w-full">
+                  이 브라우저에만 저장됩니다 (계정 없음). 지도 팝업의 인수액 줄로 표시되고,
+                  저장 안 한 매물은 그 줄이 비워집니다.
+                </span>
+              </div>
             </div>
           ) : (
             <div className="text-xs text-muted-foreground">

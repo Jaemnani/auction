@@ -185,6 +185,7 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
       {/* 인수액 계산기 — 매각물건명세서 값 입력 → 낙찰가별 인수액·실질 취득원가 */}
       {p.final_result !== "sold" && (
         <AssumptionCalculator
+          propertyId={p.id}
           appraisal={p.appraisal_amount}
           minPrice={p.min_sale_price}
           lienDate={lienInfo?.date ?? null}
