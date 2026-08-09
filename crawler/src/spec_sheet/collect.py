@@ -95,11 +95,16 @@ async def _find_case_across_pages(page, case_no: str) -> bool:
                 return False           # 그 페이지 없음 = 마지막
             await page.click(sel, timeout=8000)
             await asyncio.sleep(5)
-        try:
-            await page.get_by_text(case_no, exact=False).first.click(timeout=6000)
-            return True
-        except Exception:  # noqa: BLE001 — 이 페이지엔 없음, 다음 페이지로
-            continue
+        # ⚠ 사건번호 셀은 링크가 아니다 — 클릭 가능한 건 같은 행의 소재지 anchor.
+        #   사건번호 텍스트를 직접 클릭하면 페이지에 있어도 실패한다(실측:
+        #   목록 2페이지에 대상이 있는데 get_by_text().click() 가 계속 실패했음).
+        row = page.locator("tr").filter(has_text=case_no).first
+        if await row.count() > 0:
+            try:
+                await row.locator("a").first.click(timeout=8000)
+                return True
+            except Exception as e:  # noqa: BLE001
+                logger.info("행은 찾았으나 링크 클릭 실패(p%d): %s", pg, e)
     return False
 
 
