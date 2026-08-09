@@ -38,6 +38,31 @@ export type PropertyEstimateBrief = {
   method: "model" | "region_avg";
 };
 
+// 매각물건명세서 추출 사실 (0026 property_tenancy) — 인수액 판정 근거.
+// 수집·파싱은 crawler/src/spec_sheet. 금액 계산은 assumption.ts simulate() 담당.
+export type TenancyTenant = {
+  name: string | null;
+  deposit: number | null;          // 보증금(원) — 명세서 공란이면 null (추정 안 함)
+  move_in_dates?: string[];
+  other_dates?: string[];
+  raw?: string;
+};
+
+export type PropertyTenancy = {
+  lien_date: string | null;        // 최선순위 설정일 = 말소기준권리
+  lien_kind: string | null;
+  demand_deadline: string | null;  // 배당요구종기
+  tenants: TenancyTenant[];
+  has_tenant_block: boolean;
+  /** none=인수 없음 / risk=인수 가능 / unknown=판단 불가.
+   *  ⚠ unknown 을 none 으로 취급하지 말 것 — 사용자가 인수액 0 으로 믿는다. */
+  verdict: "none" | "risk" | "unknown";
+  confidence: "high" | "low";
+  notes: string[];
+  viewer_url: string | null;       // 명세서 원문 뷰어 (만료 가능)
+  fetched_at: string;
+};
+
 export type Property = {
   id: string;
   case_id: string;
@@ -86,6 +111,7 @@ export type Property = {
   property_photos?: Array<{ seq: number; storage_path: string | null }> | null;
   scores?: PropertyScoreBrief | null;   // 매수 안전도 (0023) — 임베드, 미채점이면 null
   estimate?: PropertyEstimateBrief | null; // 낙찰 예상가 (0022) — 지도 attach, 미예측이면 null
+  tenancy?: PropertyTenancy | null;        // 명세서 임차 사실 (0026) — 미수집이면 null
   cases: {
     id: string;
     court_code: string;

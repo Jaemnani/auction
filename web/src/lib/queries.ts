@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
 import { todayKst, plusDaysKst, SPEC_OPEN_DAYS } from "./format";
-import type { Property, PropertyDetail, PropertyEstimateBrief, PropertyFilters, PropertyScoreBrief } from "./types";
+import type { Property, PropertyDetail, PropertyEstimateBrief, PropertyFilters, PropertyScoreBrief, PropertyTenancy } from "./types";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
 // 배지는 detail 페이지에서만. 목록은 컬럼만 사용해 인덱스로 빠름.
@@ -188,6 +188,56 @@ async function attachEstimates<T extends Property>(rows: T[]): Promise<T[]> {
   const estimates = await fetchEstimatesByIds(rows.map((r) => r.id));
   for (const r of rows) r.estimate = estimates[r.id] ?? null;
   return rows;
+}
+
+// 명세서 임차 사실 (0026) — 점수·예상가와 동일한 별도 attach 패턴.
+// 0026 미적용/미수집이면 조용히 null (지도·목록이 깨지지 않게).
+const TENANCY_SELECT =
+  "property_id, lien_date, lien_kind, demand_deadline, tenants, " +
+  "has_tenant_block, verdict, confidence, notes, viewer_url, fetched_at";
+
+async function fetchTenancyByIds(
+  ids: string[],
+): Promise<Record<string, PropertyTenancy>> {
+  const out: Record<string, PropertyTenancy> = {};
+  if (ids.length === 0) return out;
+  const CHUNK = 150; // uuid .in_() 150 초과 시 NAS nginx 414 (memo 주의사항)
+  try {
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await supabase
+        .from("property_tenancy")
+        .select(TENANCY_SELECT)
+        .in("property_id", ids.slice(i, i + CHUNK));
+      if (error) return out;
+      for (const r of (data ?? []) as unknown as Array<{ property_id: string } & PropertyTenancy>) {
+        const { property_id, ...rest } = r;
+        out[property_id] = rest as PropertyTenancy;
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+async function attachTenancy<T extends Property>(rows: T[]): Promise<T[]> {
+  const map = await fetchTenancyByIds(rows.map((r) => r.id));
+  for (const r of rows) r.tenancy = map[r.id] ?? null;
+  return rows;
+}
+
+/** 상세용 단건 — 실패 시 null (카드 숨김), EstimateCard 와 동일 패턴. */
+export async function fetchTenancy(propertyId: string): Promise<PropertyTenancy | null> {
+  const { data, error } = await supabase
+    .from("property_tenancy")
+    .select(TENANCY_SELECT)
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (error || !data) return null;   // 0026 미적용/미수집
+  const { property_id: _ignored, ...rest } =
+    data as unknown as { property_id: string } & PropertyTenancy;
+  void _ignored;
+  return rest as PropertyTenancy;
 }
 
 // 상세용 — breakdown 포함 단건. 실패 시 null(카드 숨김), EstimateCard 와 동일 패턴.
@@ -645,7 +695,7 @@ export async function fetchPropertiesForMap(
         && r.longitude >= 124 && r.longitude <= 132.5
         && r.latitude  >= 33  && r.latitude  <= 39,
       );
-  // 안전도(0023)·예상가(0022) attach — 각각 실패 시 해당 값 없이 진행
-  await Promise.all([attachScores(out), attachEstimates(out)]);
+  // 안전도(0023)·예상가(0022)·명세서 임차(0026) attach — 각각 실패 시 그 값 없이 진행
+  await Promise.all([attachScores(out), attachEstimates(out), attachTenancy(out)]);
   return out;
 }

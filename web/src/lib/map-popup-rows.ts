@@ -6,7 +6,7 @@
 // 낙찰 완료 매물은 두 항목 모두 개념상 무의미하므로 빈 문자열.
 
 import { fmtMoneyShort, isSpecOpen, specOpenFrom } from "./format";
-import type { PropertyEstimateBrief } from "./types";
+import type { PropertyEstimateBrief, PropertyTenancy } from "./types";
 import type { AssumptionRecord } from "./assumption-store";
 
 const DASH = `<span style="color:#a1a1aa">-</span>`;
@@ -34,8 +34,29 @@ function row(label: string, value: string): string {
 export function assumedRowHtml(
   asm: AssumptionRecord | undefined | null, isSold: boolean,
   saleDate?: string | null,
+  tenancy?: PropertyTenancy | null,
 ): string {
   if (isSold) return "";
+  // 명세서에서 자동 추출한 판정이 있으면 그것이 우선 — 사용자가 직접 계산해
+  // 저장한 값보다 앞선 근거이고, 저장을 안 한 매물에도 경고가 뜬다.
+  if (tenancy && !asm) {
+    if (tenancy.verdict === "risk") {
+      const deps = tenancy.tenants
+        .map((t) => t.deposit)
+        .filter((d): d is number => typeof d === "number" && d > 0);
+      const amt = deps.length > 0 ? ` 보증금 ${money(Math.max(...deps))}` : "";
+      return row("인수액",
+        `<strong style="color:#dc2626;font-size:12px">인수 위험</strong>`
+        + `<span style="color:#a1a1aa;margin-left:4px">${esc(amt.trim() || "명세서 확인")}</span>`);
+    }
+    if (tenancy.verdict === "none") {
+      return row("인수액",
+        `<strong style="color:#15803d;font-size:12px">0</strong>`
+        + `<span style="color:#a1a1aa;margin-left:4px">(대항력 임차인 없음)</span>`);
+    }
+    return row("인수액",
+      `${DASH}<span style="color:#d4d4d8;margin-left:4px">(명세서 확인 필요)</span>`);
+  }
   if (asm) {
     return row("인수액",
       `<strong style="color:${asm.assumed > 0 ? "#dc2626" : "#15803d"};font-size:12px">`

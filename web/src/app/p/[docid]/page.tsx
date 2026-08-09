@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import nextDynamic from "next/dynamic";
 import {
   fetchCodeNames, fetchEstimate, fetchProperty, fetchRegionStats, fetchRegionalSaleCases,
-  photoPublicUrl,
+  fetchTenancy, photoPublicUrl,
 } from "@/lib/queries";
 import { AEE_LABELS, DETAIL_FIELD_LABELS } from "@/lib/kr-detail-labels";
 
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { EstimateCard } from "@/components/estimate-card";
 import { AssumptionCalculator } from "@/components/assumption-calculator";
+import { TenancyCard } from "@/components/tenancy-card";
 import { ScoreCard } from "@/components/score-badge";
 import { PropertyPhotos } from "@/components/property-photos";
 import { PropertyLocation } from "@/components/property-location";
@@ -95,6 +96,8 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 
   // 낙찰 예상가 (0022) — 1회 조회해 카드와 Markdown 내보내기에 공유
   const estimate = p.final_result !== "sold" ? await fetchEstimate(p.id) : null;
+  // 명세서 임차 사실 (0026) — 미수집이면 null (카드 미렌더)
+  const tenancy = p.final_result !== "sold" ? await fetchTenancy(p.id) : null;
 
   // 인수액 계산기 프리필 — 말소기준권리 후보 + 배당요구종기(YYYYMMDD→ISO) + 공식 링크
   const lienInfo = parsePrimaryLien(p.primary_liens);
@@ -181,6 +184,9 @@ export default async function PropertyDetail(props: PageProps<"/p/[docid]">) {
 
       {/* 낙찰 예상가 (0022) — 진행중 매물만 (낙찰 완료면 실제 낙찰가가 위 배너에 있음) */}
       <EstimateCard estimate={estimate} appraisalAmount={p.appraisal_amount} />
+
+      {/* 명세서에서 자동 추출한 임차 사실 — 있으면 계산기 위에 결론부터 */}
+      <TenancyCard tenancy={tenancy} />
 
       {/* 인수액 계산기 — 매각물건명세서 값 입력 → 낙찰가별 인수액·실질 취득원가 */}
       {p.final_result !== "sold" && (
