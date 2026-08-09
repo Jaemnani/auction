@@ -114,13 +114,27 @@ async def cmd_fetch(args: argparse.Namespace) -> None:
         case_no = ((p.get("cases") or {}).get("case_no")) or ""
         court = (((p.get("cases") or {}).get("courts")) or {}).get("name") or ""
         started = time.monotonic()
-        cap = await capture_spec_sheet(court, case_no,
-                                       sale_date=p.get("sale_date"),
-                                       headless=not args.headed)
+        # StreamDocs 렌더가 간헐 실패한다(같은 매물이 한 번은 텍스트 레이어 0,
+        # 다음 시도엔 66 노드). 온디맨드 운영에도 필요하므로 재시도를 둔다.
+        cap = None
+        for attempt in range(1, args.retries + 2):
+            cap = await capture_spec_sheet(court, case_no,
+                                           sale_date=p.get("sale_date"),
+                                           headless=not args.headed)
+            if cap.ok or "텍스트 레이어" not in cap.reason:
+                break
+            print(f"      렌더 실패({cap.reason}) — 재시도 {attempt}/{args.retries}")
+            await asyncio.sleep(10)
         if not cap.ok:
             failed += 1
             print(f"  [{i}/{len(targets)}] {case_no} 실패 — {cap.reason}")
             continue
+        if args.save_nodes:
+            # 파서 개발용 fixture — 법원 사이트 재접속 없이 회귀 테스트를 만들 수 있다
+            out = Path(args.save_nodes)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(cap.nodes, ensure_ascii=False, indent=1))
+            print(f"      캡처 저장: {out} ({len(cap.nodes)} 노드)")
         spec = parse_spec_sheet(cap.nodes)
         if args.dry_run:
             print(f"  [{i}/{len(targets)}] {case_no} "
@@ -163,6 +177,10 @@ def main() -> None:
     f.add_argument("--limit", type=int, default=3, help="최대 건수 (기본 3 — 차단 위험)")
     f.add_argument("--headed", action="store_true", help="브라우저 표시 (디버깅)")
     f.add_argument("--dry-run", action="store_true", help="저장 없이 결과만")
+    f.add_argument("--save-nodes", metavar="PATH",
+                   help="좌표 노드를 JSON 으로 저장 (파서 fixture 용)")
+    f.add_argument("--retries", type=int, default=2,
+                   help="렌더 실패 시 재시도 횟수 (기본 2)")
     f.set_defaults(func=lambda a: asyncio.run(cmd_fetch(a)))
 
     p = sub.add_parser("parse-file", help="저장된 캡처 JSON 파싱 (오프라인)")

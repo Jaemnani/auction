@@ -29,6 +29,8 @@ _COL_TOL = 30
 # 표 머리글 셀 판정 — 본문 문장과 구별하기 위해 짧은 조각만 인정한다
 _HEADER_MAX_LEN = 20
 _HEADER_CELLS = ("배당요구일자", "신청일자", "성  명", "성 명", "점유자", "확정일자")
+# 임차인 행 클러스터링 — 행 내부 줄 간격 8~10px, 행 사이 21~22px (실측)
+_ROW_GAP = 15
 
 # 금액 — 1,000,000 형태 (명세서 보증금란). 3자리 구분 없는 값은 면적·번지와 구별이 안 돼 제외.
 _MONEY = re.compile(r"(\d{1,3}(?:,\d{3}){2,})")
@@ -105,10 +107,59 @@ class SpecSheet:
             return "unknown"
         if not self.has_tenant_block:
             return "none"          # 임차인 기재 자체가 없음
+
+        # 전입 열을 가른 경우 그것만 본다.
         move_in = [d for t in self.tenants for d in t.move_in_dates]
-        if not move_in:
-            return "unknown"       # 임차인은 있는데 전입일을 못 읽음 → 원문 확인
-        return "none" if min(move_in) > self.lien_date else "risk"
+        if move_in:
+            return "none" if min(move_in) > self.lien_date else "risk"
+
+        # 열을 못 가른 서식 — 행 전체가 한 덩어리 텍스트인 경우가 있다(실측).
+        # 이때는 **모든 날짜를 전입 후보로 보는 보수적 판정**을 한다.
+        # 과다 경고(risk)는 사용자가 원문을 확인하면 끝이지만, 과소 경고(none)는
+        # 대항력 있는 임차인을 놓쳐 인수액을 0 으로 믿게 만든다.
+        all_dates = [d for t in self.tenants for d in t.dates]
+        if not all_dates:
+            return "unknown"       # 날짜가 아예 없음 → 원문 확인
+        return "none" if min(all_dates) > self.lien_date else "risk"
+
+
+def _movein_col_x(lines: list[tuple[int, int, str]]) -> int | None:
+    """전입신고일자 열의 x 시작점. 표 머리글 셀(짧은 조각)만 인정한다.
+
+    본문 안내문에도 "전입신고일자" 가 나오는데(x=262) 그걸 잡으면 열 경계가
+    왼쪽 끝이 돼 모든 날짜가 전입 열로 섞인다.
+    """
+    for _, x, t in lines:
+        if "전입신고일자" in t and len(t) <= 12:
+            return x
+    return None
+
+
+def _tenant_from_cluster(cluster: list[tuple[int, int, str]],
+                         col_x: int | None) -> Tenant | None:
+    """임차인 1인 클러스터 → Tenant."""
+    if not cluster:
+        return None
+    raw = " ".join(t for _, _, t in cluster)
+    tenant = Tenant(raw=raw)
+    for _, x, t in cluster:
+        ds = _dates(t)
+        if not ds:
+            continue
+        if col_x is not None and x >= col_x - _COL_TOL:
+            tenant.move_in_dates.extend(ds)
+        else:
+            tenant.other_dates.extend(ds)
+    money = _MONEY.findall(raw)
+    if money:
+        tenant.deposit = int(money[0].replace(",", ""))
+    # 성명 — 가장 왼쪽 열 조각들의 첫 토큰을 y 순서로 이어붙임
+    # (이름이 여러 줄로 쪼개지는 서식이 있다: '인터'/'코트라'/'주식회사')
+    left = min(x for _, x, _ in cluster)
+    parts = [t.split()[0] for _, x, t in cluster
+             if x <= left + 12 and t.split()]
+    tenant.name = "".join(parts) or None
+    return tenant
 
 
 def parse_spec_sheet(nodes: list[dict[str, Any]]) -> SpecSheet:
@@ -177,41 +228,24 @@ def parse_spec_sheet(nodes: list[dict[str, Any]]) -> SpecSheet:
                  if "최선순위 설정일자보다" not in t and "매수인에게 인수" not in t]
         if block:
             out.has_tenant_block = True
-            raw = " ".join(t for _, _, t in block)
-            tenant = Tenant(raw=raw)
-            # 전입신고일자 열의 x 시작점을 헤더에서 찾는다 (없으면 열 분리 불가).
-            # ⚠ 본문 안내문에도 "전입신고일자" 가 나온다
-            #   ("…그 일자, 전입신고일자 또는 사업자등록신청일자와…", x=262).
-            #   그걸 헤더로 잡으면 열 경계가 왼쪽 끝이 돼 모든 날짜가 전입 열로
-            #   섞여 들어간다 → 표 머리글 셀(짧은 조각)만 인정한다.
-            col_x = None
-            for _, x, t in lines:
-                if "전입신고일자" in t and len(t) <= 12:
-                    col_x = x
-                    break
+            # 임차인이 여럿이면 y 간격이 벌어진다 (실측: 행 내부 8~10px,
+            # 행 사이 21~22px). 간격으로 클러스터를 갈라 1인 1행으로 만든다.
+            # (안 가르면 3명이 한 덩어리가 돼 이름이 '김성철김승미송병규' 가 된다)
+            clusters: list[list[tuple[int, int, str]]] = []
+            for item in block:
+                if clusters and item[0] - clusters[-1][-1][0] <= _ROW_GAP:
+                    clusters[-1].append(item)
+                else:
+                    clusters.append([item])
+
+            col_x = _movein_col_x(lines)
             if col_x is None:
                 out.notes.append("전입신고일자 열 위치 미확인 — 날짜 열 분리 불가")
-                tenant.other_dates = _dates(raw)
-            else:
-                for _, x, t in block:
-                    ds = _dates(t)
-                    if not ds:
-                        continue
-                    # 조각의 시작 x 가 전입 열 안이면 전입/확정일자로 본다
-                    if x >= col_x - _COL_TOL:
-                        tenant.move_in_dates.extend(ds)
-                    else:
-                        tenant.other_dates.extend(ds)
-            money = _MONEY.findall(raw)
-            if money:
-                tenant.deposit = int(money[0].replace(",", ""))
-            # 성명 — 가장 왼쪽 열(x 최솟값 근처) 조각들을 이어붙임
-            xs = [x for _, x, _ in block]
-            left = min(xs)
-            name_parts = [t for _, x, t in block if x <= left + 12]
-            nm = "".join(p.split()[0] for p in name_parts if p.split())
-            tenant.name = nm or None
-            out.tenants.append(tenant)
+
+            for cl in clusters:
+                tenant = _tenant_from_cluster(cl, col_x)
+                if tenant:
+                    out.tenants.append(tenant)
 
     # ---- 3) 신뢰도 ----
     if out.lien_date and (out.demand_deadline or not out.has_tenant_block):

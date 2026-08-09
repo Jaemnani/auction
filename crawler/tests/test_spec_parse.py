@@ -61,13 +61,49 @@ class TestRealDocument(unittest.TestCase):
         self.assertIsNone(self.spec.tenants[0].deposit)
         self.assertTrue(any("보증금 공란" in n for n in self.spec.notes))
 
-    def test_verdict_unknown_not_none(self):
-        """전입일을 못 읽었으면 '인수 없음'이 아니라 '판단 불가'.
+    def test_verdict_conservative_risk(self):
+        """전입 열을 못 가른 서식 → 모든 날짜를 전입 후보로 보는 보수적 판정.
 
-        안전해 보이는 답(none)을 내면 사용자가 인수액 0 으로 믿고 입찰한다.
+        임대차기간 2022-07-10 이 최선순위 2022-10-11 보다 빠르므로 risk.
+        과다 경고는 원문 확인으로 끝나지만, 과소 경고(none)는 대항력 있는
+        임차인을 놓쳐 인수액을 0 으로 믿게 만든다.
         """
-        self.assertEqual(self.spec.opposable_risk(), "unknown")
+        self.assertEqual(self.spec.opposable_risk(), "risk")
         self.assertEqual(self.spec.confidence, "low")
+
+
+class TestMultiTenant(unittest.TestCase):
+    """다중 임차인 실측 문서 (서울동부 2022타경55849, 92 노드).
+
+    임차인 3명이 y 클러스터로 나뉘고, 그중 김승미는 전입 2017 년 <
+    최선순위 2019-09-02 이라 대항력이 살아 있는(=인수 위험) 표본이다.
+    클러스터를 안 가르면 이름이 '김성철김승미송병규' 로 뭉개진다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        f = Path(__file__).parent / "fixtures_spec_2022ta55849.json"
+        cls.spec = parse_spec_sheet(json.loads(f.read_text()))
+
+    def test_lien_and_deadline(self):
+        self.assertEqual(self.spec.lien_date, "2019-09-02")
+        self.assertEqual(self.spec.lien_kind, "가압류")
+        self.assertEqual(self.spec.demand_deadline, "2022-12-26")
+
+    def test_three_tenants_split(self):
+        names = [t.name for t in self.spec.tenants]
+        self.assertEqual(names, ["김성철", "김승미", "송병규"])
+
+    def test_deposit_on_correct_tenant(self):
+        """보증금 2.2억은 임차권등기한 김승미의 것 — 다른 임차인엔 없다"""
+        by = {t.name: t for t in self.spec.tenants}
+        self.assertEqual(by["김승미"].deposit, 220_000_000)
+        self.assertIsNone(by["김성철"].deposit)
+        self.assertIsNone(by["송병규"].deposit)
+
+    def test_verdict_risk(self):
+        """김승미 전입 2017 < 최선순위 2019-09-02 → 인수 위험"""
+        self.assertEqual(self.spec.opposable_risk(), "risk")
 
 
 class TestVerdict(unittest.TestCase):
@@ -89,10 +125,22 @@ class TestVerdict(unittest.TestCase):
         s.tenants.append(Tenant(move_in_dates=["2019-03-02"]))
         self.assertEqual(s.opposable_risk(), "risk")
 
-    def test_other_dates_do_not_decide(self):
-        """임대차기간 날짜는 대항력 판정에 쓰이지 않는다"""
+    def test_move_in_column_wins_when_available(self):
+        """전입 열을 가른 경우 그 열만 본다 — 임대차기간에 끌려가지 않는다"""
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
+        s.tenants.append(Tenant(move_in_dates=["2024-07-09"],
+                                other_dates=["2019-01-01"]))
+        self.assertEqual(s.opposable_risk(), "none")
+
+    def test_fallback_is_conservative(self):
+        """전입 열이 비면 모든 날짜로 보수 판정 (none 이 아니라 risk)"""
         s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
         s.tenants.append(Tenant(other_dates=["2019-01-01"]))
+        self.assertEqual(s.opposable_risk(), "risk")
+
+    def test_no_dates_at_all_is_unknown(self):
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
+        s.tenants.append(Tenant())
         self.assertEqual(s.opposable_risk(), "unknown")
 
     def test_no_lien_date(self):
