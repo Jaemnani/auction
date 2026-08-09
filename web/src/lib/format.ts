@@ -43,3 +43,27 @@ export function fmtDiscount(min: number | null, base: number | null): string {
   const off = (1 - min / base) * 100;
   return off > 0 ? `▼${Math.round(off)}%` : "-";
 }
+
+// ---------- 한국 날짜 (매각기일 기준) ----------
+// 매각기일은 법원(한국) 날짜다. 서버는 UTC(Vercel)라 toISOString() 을 그대로 쓰면
+// KST 00:00~09:00 구간에서 하루 밀린다 (어제 기일이 "오늘 이후"로 잡히는 등).
+// 명세서 공개창 계산은 서버(쿼리)와 클라이언트(안내 문구)가 같은 값을 써야 하므로
+// 여기 한 곳에서만 만든다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function kstDateStr(ms: number): string {
+  return new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** 오늘 (KST, YYYY-MM-DD) */
+export function todayKst(): string {
+  return kstDateStr(Date.now());
+}
+
+/** 오늘 + n일 (KST, YYYY-MM-DD) */
+export function plusDaysKst(n: number): string {
+  return kstDateStr(Date.now() + n * 86_400_000);
+}
+
+/** 매각물건명세서 공개 기간 (일) — 법원은 매각기일 1주 전부터 공개. */
+export const SPEC_OPEN_DAYS = 7;

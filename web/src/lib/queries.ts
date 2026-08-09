@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { supabase, publicStorageUrl, PHOTO_BUCKET } from "./supabase";
+import { todayKst, plusDaysKst, SPEC_OPEN_DAYS } from "./format";
 import type { Property, PropertyDetail, PropertyEstimateBrief, PropertyFilters, PropertyScoreBrief } from "./types";
 
 // 목록용 — JSON path 0 (17k row × jsonb 추출 = 타임아웃)
@@ -74,8 +75,14 @@ function applyFilters(q: FilterableQuery, filters: PropertyFilters): FilterableQ
 
   if (filters.upcoming_only && filters.status !== "sold_only") {
     // sold_only 는 매각기일이 전부 과거라 upcoming 필터가 결과를 전멸시킴 — 무시.
-    const today = new Date().toISOString().slice(0, 10);
-    q = q.gte("sale_date", today);
+    q = q.gte("sale_date", todayKst());
+  }
+
+  // 매각물건명세서 열람 가능 = 매각기일 1주 전 ~ 당일 (법원 공개 규칙).
+  // 인수액 계산에 필요한 임차인 정보의 유일한 출처라 "지금 분석 가능한 매물" 필터.
+  // sold_only 는 기일이 과거라 결과가 전멸하므로 upcoming_only 와 같은 이유로 무시.
+  if (filters.spec_open && filters.status !== "sold_only") {
+    q = q.gte("sale_date", todayKst()).lte("sale_date", plusDaysKst(SPEC_OPEN_DAYS));
   }
 
   if (filters.addr_state === "with_road") q = q.not("road_addr", "is", null);

@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import type { PropertyFilters } from "@/lib/types";
+import { todayKst, plusDaysKst, SPEC_OPEN_DAYS } from "@/lib/format";
 
 type Option = { code: string; name: string };
 
@@ -101,6 +102,8 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     }
     if (f.upcoming_only) params.set("upcoming_only", "1");
     else params.delete("upcoming_only");
+    if (f.spec_open) params.set("spec_open", "1");
+    else params.delete("spec_open");
     // status — 낙찰 포함 토글 (with_sold). sold_only는 /sold 페이지 전용이라 여기선 미사용.
     if (f.status === "with_sold") params.set("status", "with_sold");
     else params.delete("status");
@@ -122,6 +125,7 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
     f.q, f.court, f.sd, f.sgg, f.usage_lcl, f.usage_mcl,
     f.min_appraisal, f.max_appraisal, f.min_sale, f.max_sale,
     f.min_fail, f.max_fail, f.sale_from, f.sale_to, f.min_score,
+    f.spec_open || undefined,
   ].filter((v) => v !== undefined && v !== "" && v !== null).length;
 
   // 코드 → 한글 라벨 lookup (기본값: "전체")
@@ -278,6 +282,21 @@ export function FilterSidebar({ courts, sdList, usageLcl, initial }: Props) {
               />
               <span>미래 기일만</span>
             </label>
+            {/* 명세서 열람 가능 = 매각기일 1주 전부터 (법원 공개 규칙).
+                인수액 계산에 필요한 임차인 정보의 유일한 출처라 "지금 분석 가능한 매물" 필터. */}
+            <label className="text-xs flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!f.spec_open}
+                onChange={(e) => set("spec_open", e.target.checked || undefined)}
+              />
+              <span>명세서 열람 가능 <span className="text-muted-foreground">(기일 {SPEC_OPEN_DAYS}일 전~)</span></span>
+            </label>
+            {f.spec_open && (
+              <div className="text-caption-xs text-muted-foreground mt-0.5 pl-5">
+                {todayKst()} ~ {plusDaysKst(SPEC_OPEN_DAYS)} 기일 · 인수액 계산 가능
+              </div>
+            )}
             <label className="text-xs flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
               <input
                 type="checkbox"

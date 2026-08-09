@@ -42,6 +42,7 @@ function buildActiveFilters(
     out.push({ label: "매각가율%", value: `${f.min_rate ?? 0}~${f.max_rate ?? "∞"}` });
   }
   if (f.upcoming_only) out.push({ label: "미래기일만", value: "ON" });
+  if (f.spec_open)     out.push({ label: "명세서 열람", value: "가능" });
   if (f.addr_state === "with_road") out.push({ label: "도로명", value: "있음" });
   if (f.addr_state === "no_road")   out.push({ label: "도로명", value: "미수집" });
   // (제외 키워드/세부분류/파생 칩은 2026-07-26 필터 제거와 함께 삭제)

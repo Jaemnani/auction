@@ -137,6 +137,10 @@ export type PropertyFilters = {
   max_rate?: number;
   min_score?: number; // 매수 안전도 최소 (0~100, safety_score) — 0023
   upcoming_only?: boolean; // 매각기일 미래만
+  /** 매각물건명세서 열람 가능한 매물만 — 법원은 매각기일 1주 전부터 공개.
+   *  = 매각기일이 오늘 ~ 오늘+7일. 인수액 계산에 필요한 임차인 정보의 유일한 출처라
+   *  "지금 분석 가능한 매물"을 고르는 필터. (docs/api_recon.md 매각물건명세서 절) */
+  spec_open?: boolean;
   status?: "active" | "with_sold" | "sold_only"; // 진행중만(기본) / 낙찰 포함 / 낙찰만(30일 유예창)
   addr_state?: "with_road" | "no_road"; // 도로명 보유 여부 — 미설정=전체
   sale_from?: string; // 매각기일 from
