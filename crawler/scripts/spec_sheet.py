@@ -45,6 +45,13 @@ def _sb():
     key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL / SUPABASE_(SERVICE_)KEY env required")
+    # .env 의 :8080 은 NAS LAN 전용 — 집 밖/핫스팟에서는 Connection refused.
+    # 외부에서는 https(443, DSM→Caddy→PostgREST)로 붙어야 한다.
+    if ":8080" in url:
+        print(f"[warn] SUPABASE_URL 이 LAN 전용 주소입니다: {url}\n"
+              "       LAN 밖이면 다음처럼 덮어쓰세요:\n"
+              '       SUPABASE_URL="https://jeremylab.synology.me" python '
+              "crawler/scripts/spec_sheet.py ...", file=sys.stderr)
     return create_client(url, key)
 
 
@@ -107,7 +114,9 @@ async def cmd_fetch(args: argparse.Namespace) -> None:
         case_no = ((p.get("cases") or {}).get("case_no")) or ""
         court = (((p.get("cases") or {}).get("courts")) or {}).get("name") or ""
         started = time.monotonic()
-        cap = await capture_spec_sheet(court, case_no, headless=not args.headed)
+        cap = await capture_spec_sheet(court, case_no,
+                                       sale_date=p.get("sale_date"),
+                                       headless=not args.headed)
         if not cap.ok:
             failed += 1
             print(f"  [{i}/{len(targets)}] {case_no} 실패 — {cap.reason}")
