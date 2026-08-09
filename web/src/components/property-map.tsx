@@ -18,6 +18,7 @@ import {
   getAssumptions, subscribeAssumptions, getAssumptionsVersion,
   getAssumptionsVersionServer,
 } from "@/lib/assumption-store";
+import { assumedRowHtml, estimateRowHtml } from "@/lib/map-popup-rows";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
 
@@ -444,29 +445,10 @@ export function PropertyMap({
 
       const money = (v: number | null | undefined) => escapeHtml(fmtMoneyShort(v ?? null));
 
-      // 인수액 — 대항력 임차인 보증금 중 낙찰자가 떠안는 금액.
-      // 값의 소스는 상세 계산기에서 저장한 것(브라우저 로컬)뿐 — 명세서 자동수집이
-      // 봇 차단으로 불가하기 때문(docs/api_recon.md). 미저장이라도 줄과 라벨은 항상
-      // 두고 값만 "-" 로 표시한다 (기능 존재를 알리고 카드 높이도 일정하게).
+      // 인수액·예상 낙찰가 — 값이 없어도 라벨 줄은 항상 남기고 "-" (map-popup-rows.ts).
       // (청구액은 낙찰자 부담이 아니라 배당 대상이라 지도에서 제외 — 상세에만 표시)
-      const asm = assumptions[p.id];
-      const assumedValue = asm
-        ? `<strong style="color:${asm.assumed > 0 ? "#dc2626" : "#15803d"};font-size:12px">${money(asm.assumed)}</strong><span style="color:#a1a1aa;margin-left:4px">(낙찰 ${money(asm.bid)} 기준)</span>`
-        : `<span style="color:#a1a1aa">-</span><span style="color:#d4d4d8;margin-left:4px">(상세에서 계산)</span>`;
-      const assumedRow = isSold
-        ? ""
-        : `<div style="display:flex;justify-content:space-between;align-items:baseline;color:#71717a;font-size:11px;margin-top:3px">
-             <span>인수액</span><span>${assumedValue}</span>
-           </div>`;
-
-      // 낙찰 예상가(0022) — region_avg 폴백은 "참고" 표기.
-      const est = p.estimate;
-      const estRow = !isSold && est?.estimated_price != null
-        ? `<div style="display:flex;justify-content:space-between;align-items:baseline;color:#71717a;font-size:11px;margin-top:3px">
-             <span>예상 낙찰가${est.method === "region_avg" ? " <span style=\"color:#a1a1aa\">(참고)</span>" : ""}</span>
-             <span><strong style="color:#0f766e;font-size:12px">${money(est.estimated_price)}</strong>${est.estimated_rate_pct != null ? `<span style="color:#a1a1aa;margin-left:4px">(${est.estimated_rate_pct}%)</span>` : ""}</span>
-           </div>`
-        : "";
+      const assumedRow = assumedRowHtml(assumptions[p.id], isSold);
+      const estRow = estimateRowHtml(p.estimate, isSold);
 
       const priceBlock = isSold
         ? `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
