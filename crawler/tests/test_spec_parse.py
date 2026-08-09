@@ -1,0 +1,99 @@
+"""매각물건명세서 파서 단위 테스트 — 실제 캡처 fixture 기반.
+
+fixture: 2024타경2532 (서울중앙지법) 명세서에서 실제로 뽑은 좌표 텍스트 노드 66개.
+이 문서는 전입신고일자 칸이 공란이고 x=501 날짜들은 임대차기간 열이다 —
+열을 안 가르면 임대차 시작일을 전입일로 오인해 판정이 뒤집히는 표본이라 회귀 가치가 크다.
+"""
+import json
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from spec_sheet.parse import SpecSheet, Tenant, parse_spec_sheet  # noqa: E402
+
+FIXTURE = Path(__file__).parent / "fixtures_spec_2024ta2532.json"
+
+
+class TestRealDocument(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.spec = parse_spec_sheet(json.loads(FIXTURE.read_text()))
+
+    def test_lien(self):
+        """최선순위 설정일 = 말소기준권리 (문서: 2022.10.11. 근저당)"""
+        self.assertEqual(self.spec.lien_date, "2022-10-11")
+        self.assertEqual(self.spec.lien_kind, "근저당")
+
+    def test_demand_deadline_with_spaces(self):
+        """배당요구종기 — '2024. 8. 1.' 공백 서식도 파싱"""
+        self.assertEqual(self.spec.demand_deadline, "2024-08-01")
+
+    def test_tenant_block_detected(self):
+        self.assertTrue(self.spec.has_tenant_block)
+        self.assertEqual(len(self.spec.tenants), 1)
+
+    def test_dates_go_to_correct_column(self):
+        """x=501 날짜는 임대차기간 열 — 전입 열(x≈763)이 아니다.
+
+        이 분리가 깨지면 임대차 시작일(2022-07-10)이 전입일로 오인돼
+        '대항력 있음'으로 잘못 뒤집힌다.
+        """
+        t = self.spec.tenants[0]
+        self.assertEqual(t.move_in_dates, [])
+        self.assertIn("2022-07-10", t.other_dates)
+        self.assertIn("2024-07-09", t.other_dates)
+
+    def test_deposit_not_guessed(self):
+        """보증금 공란 — 추정하지 않고 None"""
+        self.assertIsNone(self.spec.tenants[0].deposit)
+        self.assertTrue(any("보증금 공란" in n for n in self.spec.notes))
+
+    def test_verdict_unknown_not_none(self):
+        """전입일을 못 읽었으면 '인수 없음'이 아니라 '판단 불가'.
+
+        안전해 보이는 답(none)을 내면 사용자가 인수액 0 으로 믿고 입찰한다.
+        """
+        self.assertEqual(self.spec.opposable_risk(), "unknown")
+        self.assertEqual(self.spec.confidence, "low")
+
+
+class TestVerdict(unittest.TestCase):
+    """판정 로직 — 합성 입력으로 경계 고정."""
+
+    def test_no_tenant_block(self):
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=False)
+        self.assertEqual(s.opposable_risk(), "none")
+
+    def test_move_in_after_lien(self):
+        """전입이 최선순위보다 늦음 → 대항력 없음 → 인수 없음"""
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
+        s.tenants.append(Tenant(move_in_dates=["2024-07-09"]))
+        self.assertEqual(s.opposable_risk(), "none")
+
+    def test_move_in_before_lien(self):
+        """전입이 최선순위보다 빠름 → 인수 위험 (금액은 계산하지 않음)"""
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
+        s.tenants.append(Tenant(move_in_dates=["2019-03-02"]))
+        self.assertEqual(s.opposable_risk(), "risk")
+
+    def test_other_dates_do_not_decide(self):
+        """임대차기간 날짜는 대항력 판정에 쓰이지 않는다"""
+        s = SpecSheet(lien_date="2022-10-11", has_tenant_block=True)
+        s.tenants.append(Tenant(other_dates=["2019-01-01"]))
+        self.assertEqual(s.opposable_risk(), "unknown")
+
+    def test_no_lien_date(self):
+        s = SpecSheet(has_tenant_block=True)
+        s.tenants.append(Tenant(move_in_dates=["2019-03-02"]))
+        self.assertEqual(s.opposable_risk(), "unknown")
+
+    def test_empty_input(self):
+        s = parse_spec_sheet([])
+        self.assertIsNone(s.lien_date)
+        self.assertEqual(s.opposable_risk(), "unknown")
+
+
+if __name__ == "__main__":
+    unittest.main()
