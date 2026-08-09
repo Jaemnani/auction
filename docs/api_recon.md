@@ -259,7 +259,12 @@ resp: data.dma_dspslSpcfcInfo = { scsYn, encParam, url }
 - detail endpoint 는 같은 세션에서 `200` + `data.ipcheck: true` 였으므로 **insert endpoint 만 별도의 더 엄격한 봇 판정**을 두는 것으로 보임
 - 정찰 누적 후 detail 까지 차단됨: `{"status":200, "message":"해당 IP는 비정상적인 접속으로 보안정책에의하여 차단되었습니다.", "data":{"ipcheck":false}}`
 
-**판단** — 자동 수집은 (a) 성공률 불확실 (b) 크롤러 본체(검색·상세)까지 IP 차단으로 마비시킬 위험이 크다. 명세서는 **사용자가 공식 사이트에서 직접 열람**하고, 우리는 그 값을 입력받아 계산(인수액 계산기)하는 현재 구조를 유지한다. 재시도할 경우 반드시 별도 IP·별도 세션·기일 임박 매물 한정으로.
+**⚠ 위 "차단" 판단은 2026-08-10 정정됨** — IP 차단이 아니라 **요청 방식** 문제였다.
+새 브라우저 컨텍스트 + 다른 회선(모바일)에서도 raw fetch 만 거부되고, **Playwright 로 실제
+UI 를 클릭하는 흐름은 정상 200 + ipcheck=true**. 이어서 뷰어의 StreamDocs 프레임에서
+**명세서 전문이 DOM 텍스트로 추출됨을 실증**했다 (OCR 불필요).
+
+→ 자동 수집은 **가능**하다. 전체 체인·추출 실증·남은 작업은 **[docs/spec_sheet_automation.md](./spec_sheet_automation.md)** 참조.
 
 ## 코드 체계
 
