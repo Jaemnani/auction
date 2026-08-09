@@ -105,17 +105,50 @@ for fr in vp.frames:
 
 ## 4. 남은 작업
 
-### 4-1. 파싱 (유일한 난이도)
+### 4-1. 파싱 — **좌표 확보로 해결됨 (LLM 불필요)**
 
-`innerText` 는 PDF 시각 순서라 **표의 열이 뒤섞인다**(위 임차인 행 참조). 두 갈래:
+`innerText` 만 쓰면 PDF 시각 순서라 표의 열이 뒤섞이지만, **좌표를 함께 뽑으면 결정적으로
+복원된다.** 유료 API 없이 규칙 기반으로 충분하다.
 
-| 안 | 방법 | 비고 |
-|---|---|---|
-| **A** | `/streamdocs/v4/documents/{id}/t` JSON 의 좌표로 표 재구성 | 결정적이지만 사설 포맷 해석 필요 (52~73KB, 미분석) |
-| **B** | Gemini(프로젝트에 `GEMINI_API_KEY` 있음)로 텍스트 → 구조화 JSON | 열 뒤섞임에 강함. 스키마 강제 + 저신뢰 시 미저장 |
+**핵심**: 문서 텍스트는 캔버스 위에 깔린 `<p class="script">` 레이어에 있고 **`font-size: 0px`**
+이다. 그래서 `Range.getBoundingClientRect()` 는 0×0 을 반환한다 — 반드시
+**`parentElement` 의 좌표**를 써야 한다. (이걸 몰라 두 번 헛돌았음.)
 
-**권장: B 우선, 검증 실패분만 A.** 인수액은 금액이 걸린 값이라 **추출 신뢰도가 낮으면
-저장하지 말고 "미상"으로 두는** 보수적 처리가 필수.
+```js
+// streamdocs/view/sd 프레임에서 실행
+const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+const out = []; let n;
+while ((n = walker.nextNode())) {
+  const t = (n.nodeValue || '').trim(); if (!t) continue;
+  const pe = n.parentElement; if (!pe) continue;
+  const b = pe.getBoundingClientRect();          // ← Range 아님. parentElement
+  if (b.width === 0 && b.height === 0) continue;
+  out.push({ t, x: Math.round(b.x), y: Math.round(b.y) });
+}
+```
+
+⚠ **렌더 완료까지 폴링 필수** — `document.querySelectorAll('p.script').length > 30` 이 될
+때까지 기다린다. 안 그러면 빈 문서를 읽는다(실측: 같은 코드가 어떤 실행에선 4개, 어떤
+실행에선 66개).
+
+실측 결과 (2024타경2532) — 66개 노드, y 로 행이 깔끔히 갈림:
+
+```
+y= 352  별지 기재와 같음 2022.10.11. 근저당 배당요구종기 2024. 8. 1.   @402
+y= 520  인터 주거및                                                  @272
+y= 528  2022.07.10.-                                                @501
+y= 536  코트라 504.7 현황조사 점포 2022.07.15.                        @266
+y= 544  2024.07.09.                                                 @501
+y= 556  주식회사 임차인                                              @262
+```
+
+임차인 블록은 y 520~556 에 모여 있고 x 로 열이 갈린다(성명 262~272 / 점유부분·출처 266 /
+날짜 501). **행=y 클러스터, 열=x 구간** 규칙으로 복원 가능.
+
+여전히 **저신뢰 시 미저장** 원칙은 유지 — 인수액은 금액이 걸린 값이라, 애매하면 채우지 말고
+"미상"으로 두고 명세서 원문 링크를 병기한다.
+
+추출 목표 스키마:
 
 추출 목표 스키마:
 ```ts
