@@ -26,6 +26,10 @@ _DATE = re.compile(r"(\d{4})\s*[.\-]\s*(\d{1,2})\s*[.\-]\s*(\d{1,2})\s*\.?")
 # 전입신고일자 열 판정 허용오차(px) — 조각 시작 x 가 헤더보다 살짝 왼쪽일 수 있음
 _COL_TOL = 30
 
+# 표 머리글 셀 판정 — 본문 문장과 구별하기 위해 짧은 조각만 인정한다
+_HEADER_MAX_LEN = 20
+_HEADER_CELLS = ("배당요구일자", "신청일자", "성  명", "성 명", "점유자", "확정일자")
+
 # 금액 — 1,000,000 형태 (명세서 보증금란). 3자리 구분 없는 값은 면적·번지와 구별이 안 돼 제외.
 _MONEY = re.compile(r"(\d{1,3}(?:,\d{3}){2,})")
 
@@ -148,15 +152,24 @@ def parse_spec_sheet(nodes: list[dict[str, Any]]) -> SpecSheet:
                 break
 
     # ---- 2) 임차인 블록 ----
-    # 표 헤더 마지막("(배당요구일자)" 등) 다음 ~ "<비고>" 사이가 임차인 행 영역.
-    y_start = None
+    # 표 헤더 **마지막 줄** 다음 ~ "<비고>" 사이가 임차인 행 영역.
+    #
+    # ⚠ 본문 안내문에도 머리글 단어가 나온다
+    #   ("구 여부와 그 일자, 전입신고일자 또는 사업자등록신청일자와…", y=412).
+    #   그걸 시작점으로 잡으면 표 머리글 줄들이 임차인 행에 섞여 들어가
+    #   성명이 "점유자성인터코트라주식회사" 처럼 오염된다.
+    #   → 짧은 머리글 셀만 인정하고, 그중 **가장 아래(y 최대)** 를 시작점으로.
     y_end = None
     for y, _, t in lines:
-        if y_start is None and ("배당요구일자" in t or "신청일자" in t):
-            y_start = y
         if "<비고>" in t or t.startswith("비고"):
             y_end = y
             break
+    header_ys = [
+        y for y, _, t in lines
+        if (y_end is None or y < y_end) and len(t) <= _HEADER_MAX_LEN
+        and any(k in t for k in _HEADER_CELLS)
+    ]
+    y_start = max(header_ys) if header_ys else None
     if y_start is not None and y_end is not None and y_end > y_start:
         block = [(y, x, t) for y, x, t in lines if y_start < y < y_end]
         # 안내문(고정 문구)은 임차인 행이 아니다

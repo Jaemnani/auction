@@ -45,6 +45,17 @@ class TestRealDocument(unittest.TestCase):
         self.assertIn("2022-07-10", t.other_dates)
         self.assertIn("2024-07-09", t.other_dates)
 
+    def test_block_excludes_table_header(self):
+        """임차인 블록에 표 머리글이 섞이면 안 된다.
+
+        본문 안내문('…사업자등록신청일자와…')을 블록 시작으로 잡으면 머리글
+        줄들이 딸려 들어와 성명이 '점유자성인터코트라주식회사' 로 오염됐다.
+        """
+        raw = self.spec.tenants[0].raw
+        self.assertNotIn("전입신고일자", raw)
+        self.assertNotIn("점유정보출처", raw)
+        self.assertIn("코트라", raw)
+
     def test_deposit_not_guessed(self):
         """보증금 공란 — 추정하지 않고 None"""
         self.assertIsNone(self.spec.tenants[0].deposit)
