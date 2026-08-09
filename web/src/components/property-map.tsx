@@ -447,7 +447,7 @@ export function PropertyMap({
 
       // 인수액·예상 낙찰가 — 값이 없어도 라벨 줄은 항상 남기고 "-" (map-popup-rows.ts).
       // (청구액은 낙찰자 부담이 아니라 배당 대상이라 지도에서 제외 — 상세에만 표시)
-      const assumedRow = assumedRowHtml(assumptions[p.id], isSold);
+      const assumedRow = assumedRowHtml(assumptions[p.id], isSold, p.sale_date);
       const estRow = estimateRowHtml(p.estimate, isSold);
 
       const priceBlock = isSold

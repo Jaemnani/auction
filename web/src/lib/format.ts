@@ -67,3 +67,17 @@ export function plusDaysKst(n: number): string {
 
 /** 매각물건명세서 공개 기간 (일) — 법원은 매각기일 1주 전부터 공개. */
 export const SPEC_OPEN_DAYS = 7;
+
+/** 매각물건명세서 공개 시작일 (= 매각기일 − 7일, YYYY-MM-DD). */
+export function specOpenFrom(saleDate: string): string {
+  return new Date(Date.parse(`${saleDate}T00:00:00Z`) - SPEC_OPEN_DAYS * 86_400_000)
+    .toISOString().slice(0, 10);
+}
+
+/** 지금 명세서를 열람할 수 있는가 (공개 시작일 ≤ 오늘 ≤ 매각기일).
+ *  YYYY-MM-DD 는 사전순 비교가 날짜순과 같아 문자열 비교로 충분. */
+export function isSpecOpen(saleDate: string | null | undefined): boolean {
+  if (!saleDate) return false;
+  const today = todayKst();
+  return specOpenFrom(saleDate) <= today && today <= saleDate;
+}

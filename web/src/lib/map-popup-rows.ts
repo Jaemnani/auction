@@ -5,7 +5,7 @@
 //  라벨이 남아야 기능 존재를 알 수 있고 매물마다 카드 높이도 일정하다.)
 // 낙찰 완료 매물은 두 항목 모두 개념상 무의미하므로 빈 문자열.
 
-import { fmtMoneyShort } from "./format";
+import { fmtMoneyShort, isSpecOpen, specOpenFrom } from "./format";
 import type { PropertyEstimateBrief } from "./types";
 import type { AssumptionRecord } from "./assumption-store";
 
@@ -26,17 +26,37 @@ function row(label: string, value: string): string {
 }
 
 /** 인수액 — 대항력 임차인 보증금 중 낙찰자가 떠안는 금액.
- *  소스는 상세 계산기에서 저장한 값뿐 (명세서 자동수집 불가 — docs/api_recon.md). */
+ *  소스는 상세 계산기에서 저장한 값뿐 (명세서 자동수집 불가 — docs/api_recon.md).
+ *
+ *  미저장일 때 "-" 옆 안내는 명세서 공개 여부로 갈린다. 헤더에 칩을 더 붙이면
+ *  좁은 팝업에서 3개가 줄바꿈되므로, 그 정보가 실제로 필요한 이 줄 안에 둔다
+ *  ("-" 가 왜 비었는지와 언제 채울 수 있는지를 같은 자리에서 설명). */
 export function assumedRowHtml(
   asm: AssumptionRecord | undefined | null, isSold: boolean,
+  saleDate?: string | null,
 ): string {
   if (isSold) return "";
-  const value = asm
-    ? `<strong style="color:${asm.assumed > 0 ? "#dc2626" : "#15803d"};font-size:12px">`
+  if (asm) {
+    return row("인수액",
+      `<strong style="color:${asm.assumed > 0 ? "#dc2626" : "#15803d"};font-size:12px">`
       + `${money(asm.assumed)}</strong>`
-      + `<span style="color:#a1a1aa;margin-left:4px">(낙찰 ${money(asm.bid)} 기준)</span>`
-    : `${DASH}<span style="color:#d4d4d8;margin-left:4px">(상세에서 계산)</span>`;
-  return row("인수액", value);
+      + `<span style="color:#a1a1aa;margin-left:4px">(낙찰 ${money(asm.bid)} 기준)</span>`);
+  }
+  const hint = isSpecOpen(saleDate)
+    // 지금 명세서를 볼 수 있음 → 바로 계산 가능하다는 신호 (연한 초록 pill)
+    ? `<span style="background:#dcfce7;color:#15803d;border-radius:9999px;`
+      + `padding:1px 6px;font-size:10px;font-weight:600;margin-left:5px">명세서 공개</span>`
+    // 아직 미공개 → 언제부터 가능한지 (기일 7일 전)
+    : saleDate
+      ? `<span style="color:#d4d4d8;margin-left:5px">${esc(mmdd(specOpenFrom(saleDate)))} 공개</span>`
+      : "";
+  return row("인수액", `${DASH}${hint}`);
+}
+
+/** YYYY-MM-DD → M/D (팝업이 좁아 연도 생략) */
+function mmdd(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${Number(m)}/${Number(d)}`;
 }
 
 /** 낙찰 예상가 (0022) — region_avg 폴백은 "참고" 표기. */
