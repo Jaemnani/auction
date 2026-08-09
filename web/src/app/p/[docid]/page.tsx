@@ -577,6 +577,8 @@ function PropertyRiskCard({ p }: { p: Awaited<ReturnType<typeof fetchProperty>> 
 
   const courtCode = p.cases?.court_code ?? "";
   const caseNo = p.cases?.case_no ?? "";
+  // 사이트에 입력할 값 — 코드가 아니라 사람이 고르는 법원명이어야 함
+  const courtName = p.cases?.courts?.name ?? null;
   const officialUrl = courtCode && caseNo ? courtauctionLink(courtCode, caseNo) : null;
 
   const hasDanger = flags.some((f) => f.level === "danger") || stat?.level === "danger";
@@ -678,16 +680,26 @@ function PropertyRiskCard({ p }: { p: Awaited<ReturnType<typeof fetchProperty>> 
           </div>
         )}
 
-        {/* 공식 사이트 딥링크 */}
+        {/* 공식 사이트 — 사건 딥링크가 없어 검색 화면으로 보내고, 입력할 값을 함께 보여준다 */}
         {officialUrl && (
-          <div className="flex items-center gap-3 pt-1 text-xs">
-            <a href={officialUrl} target="_blank" rel="noopener noreferrer"
-               className="text-blue-600 hover:underline">
-              공식 사이트에서 보기 ↗
-            </a>
-            <span className="text-muted-foreground">
-              매각물건명세서 · 현황조사서 · 감정평가서는 공식 사이트에서 PDF로 제공
-            </span>
+          <div className="pt-1 text-xs space-y-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <a href={officialUrl} target="_blank" rel="noopener noreferrer"
+                 className="text-blue-600 hover:underline">
+                공식 사이트 경매사건검색 열기 ↗
+              </a>
+              <span className="text-muted-foreground">
+                아래 두 값을 입력하면 됩니다 (법원 사이트는 사건 직행 링크를 제공하지 않음)
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono">
+              <span>법원 <strong>{courtName ?? courtCode}</strong></span>
+              <span>사건번호 <strong>{caseNo}</strong></span>
+            </div>
+            <div className="text-muted-foreground">
+              매각물건명세서 · 현황조사서 · 감정평가서를 그곳에서 열람할 수 있습니다
+              (명세서는 매각기일 1주 전, 나머지는 2주 전부터).
+            </div>
           </div>
         )}
       </CardContent>

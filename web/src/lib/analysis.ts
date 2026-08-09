@@ -140,15 +140,20 @@ export function priceRate(min: number | null | undefined, base: number | null | 
   return Math.round((min / base) * 100);
 }
 
-// courtauction.go.kr 사건 상세 deeplink (사건번호 검색 결과 페이지)
-// 정확한 hash 패턴이 사이트 변경 가능성 있어, 가장 안정적인 검색 형태로 생성
-export function courtauctionLink(courtCode: string, caseNo: string): string {
-  // 형식: index.on?device=pc#/PGJ15BM01?cortOfcCd=...&csNo=...
-  // 검증 안 됐을 시 사용자가 수동 검색하도록 폴백 제공
-  const params = new URLSearchParams({
-    cortOfcCd: courtCode,
-    csNo: caseNo,
-    pgmId: "PGJ15BM01",
-  });
-  return `https://www.courtauction.go.kr/pgj/index.on?device=pc#/PGJ15BM01?${params.toString()}`;
+/** courtauction.go.kr 경매사건검색 화면 링크.
+ *
+ *  ⚠ 사건 단위 딥링크는 존재하지 않는다 (2026-08-10 실측).
+ *  법원 사이트는 WebSquare 앱이고 화면 파라미터를 URL 이 아니라 앱 내부
+ *  파라미터(`$p.getParameter("param")`)로 받는다. 이전 구현이 쓰던
+ *  `index.on?device=pc#/PGJ15BM01?cortOfcCd=…&csNo=…` 해시 형식은 사이트가
+ *  해석하지 않아 **홈 화면으로 떨어졌다**(검증 안 된 추측 형식이었음).
+ *
+ *  대신 사이트가 실제로 지원하는 `?w2xPath=` 형식으로 **경매사건검색 화면**을
+ *  연다. 사용자는 법원·사건번호만 넣으면 되고, 그 두 값은 호출부 UI 가 함께
+ *  보여준다. (인수인계: 매물별 명세서 뷰어 직행 링크는 encParam 발급이 필요해
+ *  docs/spec_sheet_automation.md 의 수집 파이프라인이 완성돼야 가능하다.)
+ */
+export function courtauctionLink(courtCode?: string, caseNo?: string): string {
+  void courtCode; void caseNo;   // 딥링크 미지원 — 시그니처는 호출부 호환 위해 유지
+  return "https://www.courtauction.go.kr/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ159M00.xml";
 }
