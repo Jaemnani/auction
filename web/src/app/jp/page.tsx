@@ -144,6 +144,14 @@ function fmtJpy(v: number | null | undefined): string {
   return v.toLocaleString("ja-JP") + "円";
 }
 
+/** 모바일 카드용 축약 표기 — 11,462,000円 → 1,146万円 (일본식 万/億 단위). */
+function fmtJpyShort(v: number | null | undefined): string {
+  if (v == null) return "—";
+  if (v >= 1e8) return `${(v / 1e8).toFixed(1)}億円`;
+  if (v >= 1e4) return `${Math.round(v / 1e4).toLocaleString("ja-JP")}万円`;
+  return v.toLocaleString("ja-JP") + "円";
+}
+
 function bitImageUrl(p: string | undefined | null): string | null {
   if (!p) return null;
   if (p.startsWith("http")) return p;
@@ -156,6 +164,76 @@ function thumbUrl(row: JpRow): string | null {
   if (ph?.thumb_path) return publicStorageUrl(JP_PHOTO_BUCKET, ph.thumb_path);
   if (ph?.storage_path) return publicStorageUrl(JP_PHOTO_BUCKET, ph.storage_path);
   return bitImageUrl(row.search_row?.photo_url);
+}
+
+/**
+ * 모바일(sm 미만) 매물 목록 — 9컬럼 테이블은 폭이 1,000px 넘어 가로 스크롤을
+ * 한참 해야 하므로, 좁은 화면에선 한국 목록과 같은 세로 카드로 바꾼다.
+ * (테이블은 sm 이상에서만 노출 — 정렬 헤더가 유용한 데스크탑용)
+ */
+function JpMobileList({ rows }: { rows: JpRow[] }) {
+  return (
+    <ul className="divide-y sm:hidden">
+      {rows.map((r) => {
+        const courtName = (r.jp_cases?.jp_courts?.name ?? "").replace("地方裁判所", "地裁");
+        const caseNo = r.jp_cases?.case_no ?? r.sale_unit_id;
+        const status = r.status ? STATUS_BADGE[r.status] : null;
+        const thumb = thumbUrl(r);
+        const area = extractJpArea(r.detail_result?.properties);
+        const dongHo = extractJpDongHo(r.detail_result?.properties);
+        return (
+          <li key={r.sale_unit_id} className="hover:bg-muted/30 transition">
+            <Link
+              href={`/jp/p/${r.sale_unit_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-stretch gap-3 p-3 min-w-0"
+            >
+              <div className="shrink-0 w-24 aspect-[4/3] overflow-hidden rounded border bg-muted/30">
+                {thumb ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={thumb} alt="" className="w-full h-full object-cover" />
+                ) : null}
+              </div>
+
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                  <span className="text-xs font-mono text-primary">{caseNo}</span>
+                  {status && (
+                    <span className={`inline-block rounded border px-1.5 py-0 text-caption-xs ${status.tone}`}>
+                      {status.label}
+                    </span>
+                  )}
+                  {r.yen_10k_trap && (
+                    <Badge variant="destructive" className="text-caption-xs px-1 py-0">⚠1万</Badge>
+                  )}
+                </div>
+                <div className="text-caption-sm text-muted-foreground">{courtName}</div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                  <Badge variant="outline" className="text-caption-xs">{r.sale_cls_label ?? "—"}</Badge>
+                  {area && <span className="font-mono text-muted-foreground">{area}</span>}
+                  {dongHo && <span className="text-muted-foreground">{dongHo}</span>}
+                </div>
+                <div className="text-xs line-clamp-2">{r.address_text ?? "—"}</div>
+                {r.bid_period_start && r.bid_period_end && (
+                  <div className="text-caption-xs font-mono text-muted-foreground">
+                    入札 {r.bid_period_start} ~ {r.bid_period_end}
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 text-right">
+                <div className="text-caption-xs text-muted-foreground">売却基準</div>
+                <div className="text-sm font-bold whitespace-nowrap">
+                  {fmtJpyShort(r.sale_standard_price)}
+                </div>
+              </div>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 const ROADMAP = [
@@ -239,6 +317,9 @@ export default async function JpListingPage(props: {
               <Link href="/jp" className="text-primary hover:underline">フィルタをリセット</Link>
             </div>
           ) : (
+            <>
+            <JpMobileList rows={rows} />
+            <div className="hidden sm:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -320,17 +401,19 @@ export default async function JpListingPage(props: {
                 })}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>
 
       {/* 페이지네이션 */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="text-xs text-muted-foreground">
             全 <strong>{count.toLocaleString()}</strong>件 · {filters.page} / {totalPages} ページ
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-1">
             <Link href={buildJpHref("/jp", filters, { page: 1 })}
                   className={linkCls(false, filters.page <= 1)}
                   aria-label="最初のページ">«</Link>

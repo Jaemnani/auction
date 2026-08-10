@@ -73,7 +73,9 @@ export default async function MapPage(props: PageProps<"/map">) {
     // 상단 메뉴바를 가리는 것 방지 — 스태킹 컨텍스트를 이 래퍼 안에 가둠.
     <div
       className="relative isolate z-0 -mx-5 -my-6 min-w-0 overflow-hidden"
-      style={{ height: "calc(100vh - 3.5rem)" }}
+      // 100dvh — iOS 주소창이 보일 때 100vh 는 실제 보이는 높이보다 커서
+      // 지도 하단(범례·자동 새로고침)이 화면 밖으로 밀린다.
+      style={{ height: "calc(100dvh - var(--header-h))" }}
     >
       <PropertyMap rows={rows} activeFilters={activeFilters} fill />
       <MapFilterOverlay>

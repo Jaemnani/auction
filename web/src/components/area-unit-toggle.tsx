@@ -18,7 +18,7 @@ export function AreaUnitToggle() {
       onClick={toggle}
       title={title}
       aria-label={title}
-      className="inline-flex items-center rounded-md border bg-background hover:bg-muted px-2 py-1 text-xs font-medium tabular-nums"
+      className="inline-flex items-center rounded-md border bg-background hover:bg-muted px-1.5 sm:px-2 py-1 text-[11px] sm:text-xs font-medium tabular-nums shrink-0 whitespace-nowrap"
     >
       <span className={unit === "sqm" ? "font-bold" : "text-muted-foreground"}>㎡</span>
       <span className="mx-1 text-muted-foreground">|</span>

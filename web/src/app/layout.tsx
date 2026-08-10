@@ -59,13 +59,15 @@ export default function RootLayout({
         <AreaUnitProvider>
         <header className="border-b sticky top-0 z-30 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
           {/* 헤더는 default(1280) — 콘텐츠 양 적어 좁아도 OK */}
-          <Container maxW="full" className="h-14 flex items-center gap-6">
-            <Link href="/" className="flex items-baseline gap-2">
-              <span className="text-lg font-bold tracking-tight">법원경매</span>
-              <span className="text-caption-sm text-text-muted hidden sm:inline">무료 검색</span>
+          {/* 모바일(390px)에서도 한 줄 유지 — 폭이 모자라면 nav 만 가로 스크롤.
+              shrink-0 + whitespace-nowrap 이 없으면 flex 가 글자를 세로로 접는다. */}
+          <Container maxW="full" className="h-14 flex items-center gap-1.5 sm:gap-6">
+            <Link href="/" className="flex items-baseline gap-2 shrink-0">
+              <span className="text-sm min-[400px]:text-base sm:text-lg font-bold tracking-tight whitespace-nowrap">법원경매</span>
+              <span className="text-caption-sm text-text-muted hidden sm:inline whitespace-nowrap">무료 검색</span>
             </Link>
             <PrimaryNav />
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
               <CountryToggle />
               <AreaUnitToggle />
             </div>

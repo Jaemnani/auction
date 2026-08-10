@@ -89,13 +89,13 @@ export async function JpFilterBar({ action, filters, prefs, courts, pdfStats }: 
                  className="sm:col-span-4 h-9 rounded-md border bg-background px-2 text-sm" />
 
           {/* 체크박스 그룹 */}
-          <div className="sm:col-span-3 flex items-center gap-3 text-xs">
-            <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+          <div className="col-span-2 sm:col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <label className="inline-flex items-center gap-1 cursor-pointer select-none shrink-0 whitespace-nowrap">
               <input type="checkbox" name="yen_10k" value="1"
                      defaultChecked={filters.yen_10k === "1"} />
               <span>{t("filter.yen10k")}</span>
             </label>
-            <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-1 cursor-pointer select-none shrink-0 whitespace-nowrap">
               <input type="checkbox" name="has_pdf" value="1"
                      defaultChecked={filters.has_pdf === "1"} />
               <span>{t("filter.has_pdf")}</span>
@@ -106,7 +106,7 @@ export async function JpFilterBar({ action, filters, prefs, courts, pdfStats }: 
                 </span>
               )}
             </label>
-            <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-1 cursor-pointer select-none shrink-0 whitespace-nowrap">
               <input type="checkbox" name="with_geo" value="1"
                      defaultChecked={filters.with_geo === "1"} />
               <span>{t("filter.with_geo")}</span>
@@ -114,14 +114,14 @@ export async function JpFilterBar({ action, filters, prefs, courts, pdfStats }: 
           </div>
 
           {/* 派生 카테고리 (別荘/空き家/리조트/離島) */}
-          <div className="sm:col-span-12 flex flex-wrap items-center gap-2 text-xs border-t pt-2">
+          <div className="col-span-2 sm:col-span-12 flex flex-wrap items-center gap-2 text-xs border-t pt-2">
             <span className="text-muted-foreground">✨ 派生:</span>
             {JP_DERIVED_OPTIONS.map((o) => {
               const active = filters.derived?.includes(o.code) ?? false;
               return (
                 <label key={o.code} title={o.desc}
                        className={
-                         "inline-flex items-center gap-1 cursor-pointer select-none rounded border px-2 py-1 transition " +
+                         "inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap rounded border px-2 py-1 transition " +
                          (active
                            ? "bg-emerald-100 border-emerald-300 text-emerald-800"
                            : "bg-card border-border hover:bg-muted")

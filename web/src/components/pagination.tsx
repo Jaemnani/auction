@@ -26,11 +26,11 @@ export function Pagination({ filters, page, pageSize, total, basePath }: Props) 
     );
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
       <div className="text-xs text-muted-foreground">
         총 <strong>{total.toLocaleString()}</strong>건 · {page} / {totalPages} 페이지
       </div>
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center justify-center sm:justify-end gap-1">
         <Link
           href={buildHref(basePath, filters, { page: 1 })}
           className={linkCls(false, page <= 1)}

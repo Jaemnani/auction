@@ -246,3 +246,21 @@
     line-height: 1.4;
   }
 }
+@layer base {
+  :root {
+    /* 헤더 실제 높이 = Container h-14(3.5rem) + header border-b(1px).
+       지도 페이지가 이 값을 빼서 뷰포트를 정확히 채운다 (1px 넘치면 세로 스크롤 생김). */
+    --header-h: calc(3.5rem + 1px);
+  }
+}
+
+@layer utilities {
+  /* 좁은 화면에서 가로 스크롤은 허용하되 스크롤바는 숨김 (헤더 nav 등). */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

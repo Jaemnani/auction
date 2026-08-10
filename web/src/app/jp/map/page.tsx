@@ -114,7 +114,9 @@ export default async function JpMapPage(props: {
     // isolate z-0: 내부 오버레이가 sticky 헤더를 가리지 않게 스태킹 격리.
     <div
       className="relative isolate z-0 -mx-5 -my-6 min-w-0 overflow-hidden"
-      style={{ height: "calc(100vh - 3.5rem)" }}
+      // 100dvh — iOS 주소창이 보일 때 100vh 는 실제 보이는 높이보다 커서
+      // 지도 하단(범례·자동 새로고침)이 화면 밖으로 밀린다.
+      style={{ height: "calc(100dvh - var(--header-h))" }}
     >
       <JpPropertyMap rows={rows} fill />
       <MapFilterOverlay>
