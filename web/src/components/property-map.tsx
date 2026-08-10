@@ -19,6 +19,10 @@ import {
   getAssumptionsVersionServer,
 } from "@/lib/assumption-store";
 import { assumedRowHtml, estimateRowHtml } from "@/lib/map-popup-rows";
+import {
+  loadNoiseIndex, airportsInView, loadAirportGeoJson, ZONE_STYLE,
+  type NoiseIndex,
+} from "@/lib/noise-layer";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
 
@@ -77,6 +81,15 @@ const LEGEND_ITEMS: { key: string; color: string; label: string }[] = [
 ];
 // 기본 표시 분류 — 건물(20000)만 켜고 나머지는 꺼둠.
 const DEFAULT_ENABLED_KEYS = ["20000"];
+
+// 소음대책지역 범례 (공항소음방지법 시행령 구분). WECPNL 70은 대책지역 밖이라 뺀다.
+const NOISE_LEGEND: { w: number; label: string }[] = [
+  { w: 95, label: "1종" },
+  { w: 90, label: "2종" },
+  { w: 85, label: "3종 가" },
+  { w: 80, label: "3종 나" },
+  { w: 75, label: "3종 다" },
+];
 
 // legend 기본 펼침 기준 — sm 브레이크포인트와 동일.
 const DESKTOP_MQ = "(min-width: 640px)";
@@ -149,6 +162,11 @@ export function PropertyMap({
   const assumptionVersion = useSyncExternalStore(
     subscribeAssumptions, getAssumptionsVersion, getAssumptionsVersionServer,
   );
+  // 공항 소음등고선 레이어 — 기본 꺼짐(무거운 파일이라 사용자가 켤 때만 받는다)
+  const [noiseOn, setNoiseOn] = useState(false);
+  const noiseIndexRef = useRef<NoiseIndex | null>(null);
+  const noiseLoadedRef = useRef<Set<string>>(new Set());
+  const noisePopupRef = useRef(false); // 현재 열린 InfoWindow 가 소음 구역 설명인가
   const [legendOverride, setLegendOverride] = useState<boolean | null>(null);
   const legendOpen = legendOverride ?? isDesktop;
 
@@ -284,6 +302,7 @@ export function PropertyMap({
         // AdvancedMarkerElement 클릭은 map click으로 전파되지 않으므로 마커 팝업엔 영향 없음.
         map.addListener("click", () => {
           infoWindowRef.current?.close();
+          noisePopupRef.current = false;
         });
         setMapReady(true);
       })
@@ -375,6 +394,81 @@ export function PropertyMap({
   const drawingPxRadius = drawing
     ? Math.hypot(drawing.x1 - drawing.x0, drawing.y1 - drawing.y0)
     : 0;
+
+  // 공항 소음등고선 오버레이 (Data layer).
+  // 화면에 들어온 공항 것만 받고, 실패해도 지도 본체엔 영향 없게 전부 삼킨다.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (!noiseOn) {
+      map.data.forEach((f) => map.data.remove(f));
+      noiseLoadedRef.current.clear();
+      // 소음 구역 설명 팝업이 떠 있었다면 같이 닫는다 (매물 팝업은 건드리지 않음)
+      if (noisePopupRef.current) {
+        infoWindowRef.current?.close();
+        noisePopupRef.current = false;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    map.data.setStyle((feature) => {
+      const w = Number(feature.getProperty("wecpnl"));
+      const c = ZONE_STYLE[w] ?? ZONE_STYLE[70];
+      return {
+        fillColor: c.fill, fillOpacity: 0.22,
+        strokeColor: c.stroke, strokeWeight: 1, strokeOpacity: 0.8,
+        clickable: true, zIndex: w, // 소음 큰 구역이 위 — 클릭 시 강한 등급이 잡히도록
+      };
+    });
+
+    const sync = async () => {
+      const b = map.getBounds();
+      if (!b || cancelled) return;
+      const index = noiseIndexRef.current ?? (await loadNoiseIndex());
+      if (!index || cancelled) return;
+      noiseIndexRef.current = index;
+
+      const ne = b.getNorthEast(), sw = b.getSouthWest();
+      const targets = airportsInView(index, {
+        west: sw.lng(), south: sw.lat(), east: ne.lng(), north: ne.lat(),
+      });
+      for (const a of targets) {
+        if (cancelled || noiseLoadedRef.current.has(a.code)) continue;
+        const gj = await loadAirportGeoJson(a);
+        if (cancelled || !gj || noiseLoadedRef.current.has(a.code)) continue;
+        noiseLoadedRef.current.add(a.code);
+        try {
+          map.data.addGeoJson(gj as object);
+        } catch {
+          noiseLoadedRef.current.delete(a.code);
+        }
+      }
+    };
+
+    void sync();
+    const idle = map.addListener("idle", () => { void sync(); });
+    const click = map.data.addListener("click", (e: google.maps.Data.MouseEvent) => {
+      const zone = e.feature.getProperty("zone");
+      const year = e.feature.getProperty("year");
+      if (!zone || !infoWindowRef.current) return;
+      infoWindowRef.current.setContent(
+        `<div style="font-size:12px;line-height:1.5;padding:2px 4px">`
+        + `<b>공항소음 ${zone}</b><br/>`
+        + `<span style="color:#6b7280">${year}년 등고선 · 참고용</span></div>`,
+      );
+      infoWindowRef.current.setPosition(e.latLng);
+      infoWindowRef.current.open(map);
+      noisePopupRef.current = true;
+    });
+
+    return () => {
+      cancelled = true;
+      google.maps.event.removeListener(idle);
+      google.maps.event.removeListener(click);
+    };
+  }, [noiseOn, mapReady]);
 
   // 마커 갱신
   useEffect(() => {
@@ -515,6 +609,7 @@ export function PropertyMap({
         suppressUntilRef.current = performance.now() + 1200;
         iw.setContent(html);
         iw.open({ map, anchor: marker });
+        noisePopupRef.current = false; // 이제 이 창은 매물 팝업 — 소음 토글이 닫지 않게
       });
       markersRef.current.push(marker);
     }
@@ -603,9 +698,59 @@ export function PropertyMap({
                 </button>
               );
             })}
+
+            {/* 공항 소음대책지역 — 켤 때만 해당 공항 등고선을 내려받는다 */}
+            <div className="mt-1 pt-1 border-t">
+              <button
+                type="button"
+                onClick={() => setNoiseOn((v) => !v)}
+                aria-pressed={noiseOn}
+                className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+              >
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-[2px] shrink-0"
+                  style={{
+                    background: noiseOn ? ZONE_STYLE[85].fill : "transparent",
+                    border: `1.5px solid ${ZONE_STYLE[85].stroke}`,
+                  }}
+                />
+                <span className={noiseOn ? "font-medium" : "text-muted-foreground"}>
+                  공항 소음
+                </span>
+              </button>
+              {noiseOn && (
+                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-caption-xs text-muted-foreground">
+                  {NOISE_LEGEND.map(({ w, label }) => (
+                    <span key={w} className="inline-flex items-center gap-1">
+                      <span
+                        className="inline-block w-2 h-2 rounded-[2px]"
+                        style={{ background: ZONE_STYLE[w].fill, opacity: 0.7 }}
+                      />
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
+
+      {/* 출처 표기(상시) + 참고용 고지 — 레이어가 켜져 있는 동안 반드시 노출 */}
+      {noiseOn && (
+        <div className="absolute right-3 bottom-8 z-30 max-w-[52%] rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
+          자료:{" "}
+          <a
+            href="https://www.airportnoise.kr/anps/gis"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="underline underline-offset-2"
+          >
+            공항소음포털
+          </a>
+          {" · 참고용(정확한 구역은 관할 지자체 확인)"}
+        </div>
+      )}
 
       {/* 원형 드래그 오버레이 — drawMode에서만 pointer-events 활성 */}
       <div
