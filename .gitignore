@@ -15,3 +15,6 @@ node_modules/
 
 # self-host 런타임 데이터 (DB/storage/caddy)
 deploy/synology/volumes/
+
+# 크롤 실행 간 상태 전달 (search-all → close-aged 완주 리포트)
+crawler/.state/

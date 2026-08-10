@@ -31,9 +31,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -42,6 +44,9 @@ try:
     load_dotenv(PROJECT_ROOT / ".env")
 except Exception:
     pass
+
+# search-all → close-aged 사이의 완주 정보 전달 파일
+DEFAULT_REPORT = PROJECT_ROOT / "crawler" / ".state" / "jp_search_report.json"
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -155,14 +160,21 @@ async def cmd_search_all(args: argparse.Namespace) -> None:
         if args.sale_cls else None
     )
 
+    started_at = datetime.now(timezone.utc).isoformat()
     store = BitStore()
     cfg = BitClientConfig()
     grand_total = 0
     pref_results: list[tuple[str, int]] = []
+    # 도도부현별 "이번 실행에서 목록을 끝까지 훑었는가".
+    # close-aged 가 이 값을 보고 완주한 도도부현에서만 종결 마킹한다 —
+    # 부분 실행(예외·전송오류·max_pages 절단)을 "BIT 에서 사라짐"으로 오인하면
+    # 살아있는 매물이 통째로 closed 가 된다(실제 사고 원인).
+    pref_complete: dict[str, bool] = {}
 
     for pref in prefs:
         block = PREFECTURE_BLOCK[pref]
         pref_cards = 0
+        complete = False
         try:
             # 도도부현마다 새 client (세션 컨텍스트 격리 — IP block 회복도 깨끗)
             async with BitClient(cfg) as c:
@@ -177,12 +189,15 @@ async def cmd_search_all(args: argparse.Namespace) -> None:
                             page=page, page_size=args.page_size,
                         )
                     except BitTransientError as e:
+                        # 중단 = 목록을 끝까지 못 봄 → 미완주 (close-aged 대상 제외)
                         logger.info("pref=%s page %d aborted (%s) — end", pref, page, e)
                         break
                     if total is None:
                         total = result.get("total", 0)
                     cards = result.get("properties") or []
                     if not cards:
+                        # 더 이상 카드가 없음 = 목록 끝까지 도달
+                        complete = True
                         break
                     n = store.upsert_search_cards(cards, prefecture_code=pref)
                     pref_cards += n
@@ -192,23 +207,47 @@ async def cmd_search_all(args: argparse.Namespace) -> None:
                         pref, page, n, seen, total or 0,
                     )
                     if args.max_pages and page >= args.max_pages:
+                        # 페이지 상한으로 잘림 — 뒤쪽 매물은 이번에 못 봤다
+                        if total and seen >= total:
+                            complete = True
+                        else:
+                            logger.warning(
+                                "pref=%s max_pages(%d) 절단: seen=%d/%d — close-aged 제외",
+                                pref, args.max_pages, seen, total or 0,
+                            )
                         break
                     if total and seen >= total:
+                        complete = True
                         break
                     page += 1
                     if page > 100:
+                        logger.warning("pref=%s page>100 절단 — close-aged 제외", pref)
                         break
         except Exception as e:
-            logger.warning("pref=%s failed: %s", pref, e)
+            complete = False
+            logger.warning("pref=%s failed: %s — close-aged 제외", pref, e)
+        pref_complete[pref] = complete
         pref_results.append((pref, pref_cards))
         grand_total += pref_cards
         logger.info("pref=%s DONE %d cards (grand total=%d)", pref, pref_cards, grand_total)
 
+    incomplete = sorted(p for p, ok in pref_complete.items() if not ok)
+    report = {
+        "started_at": started_at,
+        "prefectures": pref_complete,
+        "cards": dict(pref_results),
+    }
+    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1))
+
     print("===== search-all summary =====")
     for pref, n in pref_results:
         if n > 0:
-            print(f"  {pref}: {n}")
+            print(f"  {pref}: {n}{'' if pref_complete.get(pref) else '  (미완주)'}")
     print(f"TOTAL: {grand_total} cards across {len(prefs)} prefectures")
+    print(f"완주 {len(prefs) - len(incomplete)}/{len(prefs)} 도도부현"
+          + (f" · 미완주 {incomplete}" if incomplete else ""))
+    print(f"report: {args.report}")
 
 
 # ---------- photos ----------
@@ -339,10 +378,33 @@ async def cmd_close_aged(args: argparse.Namespace) -> None:
     """fetched_at < SINCE_ISO인 매물을 closed 마킹.
 
     SINCE는 ISO datetime. 보통 daily script가 search-all 시작 timestamp를 전달.
+
+    ⚠ search-all 리포트에서 **완주한 도도부현만** 대상으로 삼는다. 리포트가 없거나
+    읽히지 않으면 아무것도 닫지 않는다(fail-closed) — 부분 실행을 "BIT 에서 사라짐"
+    으로 오인해 살아있는 매물을 대량 종결시킨 사고의 재발 방지.
     """
+    report_path = Path(args.report)
+    if not report_path.exists():
+        print(f"SKIP: search-all 리포트 없음 ({report_path}) — 종결 마킹 안 함")
+        return
+    try:
+        report = json.loads(report_path.read_text())
+        pref_complete = report.get("prefectures") or {}
+    except Exception as e:
+        print(f"SKIP: 리포트 파싱 실패 ({e}) — 종결 마킹 안 함")
+        return
+
+    complete = sorted(p for p, ok in pref_complete.items() if ok)
+    incomplete = sorted(p for p, ok in pref_complete.items() if not ok)
+    if not complete:
+        print("SKIP: 완주한 도도부현 0 — 종결 마킹 안 함")
+        return
+
+    today = datetime.now(timezone.utc).date().isoformat()
     store = BitStore()
-    n = store.close_aged(args.since)
+    n = store.close_aged(args.since, prefectures=complete, today=today)
     print(f"DONE: {n} properties closed (fetched_at < {args.since})")
+    print(f"  대상 도도부현 {len(complete)}개" + (f" · 제외(미완주) {incomplete}" if incomplete else ""))
 
 
 # ---------- backfill-details-all (모든 도도부현 단일 프로세스 백필) ----------
@@ -606,6 +668,8 @@ def main() -> None:
     s.add_argument("--sale-cls", help="comma-separated, e.g. 1,2,3")
     s.add_argument("--max-pages", type=int, default=12)
     s.add_argument("--page-size", type=int, default=30)
+    s.add_argument("--report", default=str(DEFAULT_REPORT),
+                   help="도도부현별 완주 여부 리포트 저장 경로 (close-aged 가 읽음)")
     s.set_defaults(fn=cmd_search_all)
 
     s = sub.add_parser("photos")
@@ -614,6 +678,8 @@ def main() -> None:
 
     s = sub.add_parser("close-aged")
     s.add_argument("--since", required=True, help="ISO datetime (e.g. 2026-05-11T05:30:00Z)")
+    s.add_argument("--report", default=str(DEFAULT_REPORT),
+                   help="search-all 리포트 경로. 없으면 종결 마킹을 건너뜀")
     s.set_defaults(fn=cmd_close_aged)
 
     s = sub.add_parser("backfill-details-all")

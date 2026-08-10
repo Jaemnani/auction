@@ -137,6 +137,9 @@ drain "backfill-details-all" crawler/scripts/jp_ingest.py backfill-details-all \
 drain "photos" crawler/scripts/jp_ingest.py photos --limit "$PHOTO_LIMIT"
 
 # 4) 종결 매물 마킹 — BIT 검색에서 사라진 매물(낙찰/절차 정지)을 closed로 변경
+#    ⚠ search-all 이 **완주한 도도부현만** 대상 (리포트 파일로 전달).
+#    부분 실행을 "사라짐"으로 오인해 살아있는 매물을 대량 종결시킨 사고가 있었다.
+#    리포트가 없으면 스스로 skip (fail-closed).
 step "close-aged" crawler/scripts/jp_ingest.py close-aged --since "$RUN_SINCE_ISO"
 
 # 5) 파생 카테고리 (別荘/空き家/リゾート/離島) — 신규 戸建て 매물 자동 분류.

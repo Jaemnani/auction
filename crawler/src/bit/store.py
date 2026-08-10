@@ -377,12 +377,34 @@ class BitStore:
 
     # ---------- close-aged ----------
 
-    def close_aged(self, since_iso: str) -> int:
+    def close_aged(
+        self,
+        since_iso: str,
+        *,
+        prefectures: list[str] | None = None,
+        today: str | None = None,
+    ) -> int:
         """fetched_at < since_iso 이고 status가 종결 아닌 매물을 'closed' 마킹.
 
         매일 search-all 시작 시점을 since_iso로 받아 — 이번 갱신에서 등장 안 한 매물은
         BIT에서 사라진 것 → 낙찰 완료/절차 정지로 추정.
+
+        ⚠ 이 추정은 "그 도도부현 목록을 끝까지 훑었다"가 전제다. 전제가 깨지면
+        살아있는 매물이 통째로 closed 가 된다(실제 사고). 그래서 두 겹으로 막는다:
+
+        prefectures — 이번 실행에서 **완주한** 도도부현 코드만 대상.
+                      None 이면 아무것도 닫지 않는다(fail-closed).
+                      부분 실행·전송 오류·페이지 상한 절단은 호출자가 제외해서 넘긴다.
+        today       — 이 날짜(YYYY-MM-DD) 이후에 開札期日/入札終了가 잡힌 매물은
+                      아직 진행 중이므로 절대 닫지 않는다. 위 전제가 또 뚫려도
+                      "미래 기일인데 종결" 같은 모순은 남지 않게 하는 최후 방어선.
         """
+        if not prefectures:
+            logger.warning(
+                "close_aged: 완주한 도도부현이 없어 종결 마킹을 건너뜀 "
+                "(부분 실행을 '사라짐'으로 오인하지 않기 위함)",
+            )
+            return 0
         # PostgREST 는 기본 1000행에서 잘림(PGRST_DB_MAX_ROWS) → range 로 전량 페이징.
         # (이전엔 단일 select 라 만료 매물이 1000건 넘으면 나머지가 영구히 closed 처리
         #  안 돼 BIT 에서 사라진 죽은 매물이 UI 에 계속 노출됐음)
@@ -394,6 +416,8 @@ class BitStore:
                 self.sb.table("jp_properties")
                 .select("id")
                 .lt("fetched_at", since_iso)
+                # 완주한 도도부현만 — 못 훑은 곳의 매물은 "안 보였다"의 근거가 없다
+                .in_("prefecture_code", prefectures)
                 # status IS NULL 도 대상 — SQL의 NOT IN은 NULL을 제외(NULL→미종결로
                 # 오분류)하므로 명시 OR. (_classify_status가 상당수 NULL 반환.)
                 .or_("status.is.null,status.not.in.(closed,aborted)")
@@ -406,6 +430,11 @@ class BitStore:
             if len(batch) < PAGE:
                 break
             offset += PAGE
+
+        # 최후 방어선 — 기일이 아직 안 온 매물은 제외.
+        # (open_bid_date / bid_period_end 중 하나라도 미래면 진행 중)
+        if today and ids:
+            ids = self._drop_future_dated(ids, today)
         if not ids:
             return 0
         # 1000건씩 chunk update (PostgREST in_ 길이 제한 회피)
@@ -414,8 +443,36 @@ class BitStore:
             self.sb.table("jp_properties").update({"status": "closed"}).in_(
                 "id", chunk,
             ).execute()
-        logger.info("closed %d aged properties (fetched_at < %s)", len(ids), since_iso)
+        logger.info(
+            "closed %d aged properties (fetched_at < %s, prefectures=%d)",
+            len(ids), since_iso, len(prefectures),
+        )
         return len(ids)
+
+    def _drop_future_dated(self, ids: list, today: str) -> list:
+        """개찰기일/입찰종료가 today 이후인 매물 id 를 제외.
+
+        진행 중인 경매는 정의상 종결일 수 없다. 상위 가드(완주 도도부현)가
+        뚫리더라도 이 검사가 "미래 기일 + closed" 모순을 막는다.
+        """
+        keep = list(ids)
+        future: set = set()
+        # uuid .in_() 은 150개 초과 시 nginx 414 — chunk 로 나눠 조회
+        for i in range(0, len(ids), 150):
+            chunk = ids[i:i + 150]
+            res = (
+                self.sb.table("jp_properties")
+                .select("id, open_bid_date, bid_period_end")
+                .in_("id", chunk)
+                .execute()
+            )
+            for r in res.data or []:
+                if (r.get("open_bid_date") or "") > today or (r.get("bid_period_end") or "") > today:
+                    future.add(r["id"])
+        if future:
+            keep = [i for i in keep if i not in future]
+            logger.info("close_aged: 미래 기일 %d건 제외 (진행 중)", len(future))
+        return keep
 
     # ---------- photos ----------
 
