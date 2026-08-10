@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { makeCountBadgeEl, groupByCoord, CLUSTER_LIST_MAX } from "@/lib/map-cluster";
 import {
   GOOGLE_MAPS_API_KEY,
@@ -12,11 +12,20 @@ import {
 } from "@/lib/google-maps";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
+import { useT } from "@/lib/i18n-client";
 
 // 지도 시작 위치 — 도쿄都庁. 일본 매물의 대부분이 関東권에 집중 → 도쿄에서 시작.
 // (이전엔 일본 중심 [138, 36.5] → 첫 화면이 太平洋 위로 보임)
 const DEFAULT_CENTER = { lat: 35.6895, lng: 139.6917 };
 const DEFAULT_ZOOM = 10;
+
+// 범례 기본 펼침 기준 — sm 브레이크포인트(한국 지도와 동일).
+const DESKTOP_MQ = "(min-width: 640px)";
+function subscribeDesktopMq(cb: () => void): () => void {
+  const mq = window.matchMedia(DESKTOP_MQ);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
 
 export type JpMapRow = {
   sale_unit_id: string;
@@ -27,7 +36,28 @@ export type JpMapRow = {
   sale_cls_label: string | null;
   sale_standard_price: number | null;
   address_text: string | null;
+  status: string | null;
 };
+
+/** 状態별 마커 색 + 범례. 한국 지도의 "마커 색 토글"과 같은 역할.
+ *  ⚠ status 는 BIT 검색 목록에서 사라지면 closed 로 마킹하는 방식이라
+ *  완전히 신뢰할 수 없다 → 기본값은 전부 표시(숨김 없음). */
+const JP_STATUS_STYLE: Record<string, { color: string; label: string }> = {
+  period_bid:    { color: "#2563eb", label: "期間入札" },
+  special_sale:  { color: "#f59e0b", label: "特別売却" },
+  reval_pending: { color: "#9333ea", label: "評価再調整" },
+  re_bid:        { color: "#0891b2", label: "再入札" },
+  closed:        { color: "#71717a", label: "終結" },
+  aborted:       { color: "#e11d48", label: "中止" },
+};
+const JP_STATUS_UNKNOWN = { color: "#a1a1aa", label: "—" };
+
+function jpStatusKey(r: JpMapRow): string {
+  return r.status && JP_STATUS_STYLE[r.status] ? r.status : "unknown";
+}
+function jpStatusStyle(key: string) {
+  return JP_STATUS_STYLE[key] ?? JP_STATUS_UNKNOWN;
+}
 
 type Props = {
   rows: JpMapRow[];
@@ -66,6 +96,7 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const projectionRef = useRef<google.maps.OverlayView | null>(null);
 
+  const t = useT();
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   // 원형 선택 상태
@@ -74,13 +105,42 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
   // 현재 드래그 중인 임시 원 (px 좌표) — SVG 미리보기용
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
-  // 원 안 매물만 (drawMode + circle 있을 때)
+  // 状態 표시 토글 — 기본은 전부 켬 (status 신뢰도 이슈로 숨기지 않는다)
+  const isDesktop = useSyncExternalStore(
+    subscribeDesktopMq,
+    () => window.matchMedia(DESKTOP_MQ).matches,
+    () => false,
+  );
+  const [legendOverride, setLegendOverride] = useState<boolean | null>(null);
+  const legendOpen = legendOverride ?? isDesktop;
+  const [hiddenStatus, setHiddenStatus] = useState<Set<string>>(() => new Set());
+  const toggleStatus = useCallback((key: string) => {
+    setHiddenStatus((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // 원 안 매물만 (drawMode + circle 있을 때) + 状態 토글
   const filteredRows = useMemo(() => {
-    if (!circle) return rows;
-    return rows.filter(
-      (r) => distanceM(circle.centerLng, circle.centerLat, r.longitude, r.latitude) <= circle.radiusM,
-    );
-  }, [rows, circle]);
+    const inCircle = circle
+      ? rows.filter((r) => distanceM(circle.centerLng, circle.centerLat, r.longitude, r.latitude) <= circle.radiusM)
+      : rows;
+    if (hiddenStatus.size === 0) return inCircle;
+    return inCircle.filter((r) => !hiddenStatus.has(jpStatusKey(r)));
+  }, [rows, circle, hiddenStatus]);
+
+  // 범례에 표시할 상태 목록 — 실제 데이터에 있는 것만 (개수와 함께)
+  const statusCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      const k = jpStatusKey(r);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, [rows]);
 
   const pointsKey = useMemo(
     () => filteredRows.map((r) => r.sale_unit_id).join(","),
@@ -164,9 +224,10 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
       ${r.address_text ? `<div style="color:#52525b;font-size:11px;margin-top:2px;word-break:keep-all">${r.address_text}</div>` : ""}
       <div style="margin-top:6px">
         <span style="display:inline-block;background:#fed7aa;color:#7c2d12;padding:1px 6px;border-radius:4px;font-size:10px">${r.sale_cls_label ?? "—"}</span>
+        <span style="display:inline-block;background:${jpStatusStyle(jpStatusKey(r)).color}22;color:${jpStatusStyle(jpStatusKey(r)).color};padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">${jpStatusStyle(jpStatusKey(r)).label}</span>
         <span style="font-family:monospace;margin-left:6px;font-weight:600">${fmtJpy(r.sale_standard_price)}</span>
       </div>
-      <a href="/jp/p/${r.sale_unit_id}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">상세 →</a>`;
+      <a href="/jp/p/${r.sale_unit_id}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;display:inline-block;margin-top:6px">${t("map.detail_link")}</a>`;
 
     for (const gr of groups) {
       const r0 = gr[0];
@@ -174,14 +235,14 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
       let content: HTMLElement;
       if (gr.length === 1) {
         popupHtml = `<div style="font-size:12px;min-width:200px">${rowCard(r0)}</div>`;
-        content = makePin("#c2410c").element;
+        content = makePin(jpStatusStyle(jpStatusKey(r0)).color).element;
       } else {
         const shown = gr.slice(0, CLUSTER_LIST_MAX);
         const more = gr.length - shown.length;
         popupHtml = `<div style="font-size:12px;min-width:220px;max-width:300px;max-height:320px;overflow-y:auto">
-             <div style="font-weight:700;margin-bottom:4px">이 위치에 ${gr.length}건</div>
+             <div style="font-weight:700;margin-bottom:4px">${t("map.here_count")} ${gr.length}${t("map.unit_case")}</div>
              ${shown.map((r, i) => `<div style="${i > 0 ? "border-top:1px solid #e4e4e7;padding-top:6px;margin-top:6px" : ""}">${rowCard(r)}</div>`).join("")}
-             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">외 ${more}건 (지도 확대·필터로 좁혀보세요)</div>` : ""}
+             ${more > 0 ? `<div style="color:#71717a;font-size:11px;margin-top:8px;border-top:1px solid #e4e4e7;padding-top:6px">${t("map.more_count")} ${more}${t("map.unit_case")} ${t("map.more_hint")}</div>` : ""}
            </div>`;
         content = makeCountBadgeEl(gr.length);
       }
@@ -210,7 +271,7 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
         if (z != null && z > 14) map.setZoom(14);
       });
     }
-  }, [pointsKey, filteredRows, circle, mapReady]);
+  }, [pointsKey, filteredRows, circle, mapReady, t]);
 
   // 오버레이 마우스 이벤트 — drawMode 시에만 활성
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -299,6 +360,53 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
         )}
       </div>
 
+      {/* 状態 범례 = 표시 토글 — 한국 지도의 "마커 색" 범례와 같은 자리·동작.
+          모바일에선 지도를 가려 기본 접힘. */}
+      <div className="absolute left-3 bottom-8 z-30 rounded-md bg-background/95 border text-caption-sm shadow-sm">
+        <button
+          type="button"
+          onClick={() => setLegendOverride(!legendOpen)}
+          aria-expanded={legendOpen}
+          className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-muted-foreground font-medium text-caption-xs uppercase tracking-wide"
+        >
+          <span>{legendOpen ? t("map.legend_status") : t("map.legend_status_short")}</span>
+          <span aria-hidden>{legendOpen ? "▾" : "▸"}</span>
+        </button>
+        {legendOpen && (
+          <div className="px-2.5 pb-1.5 space-y-0.5">
+            {[...statusCounts.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .map(([key, n]) => {
+                const st = jpStatusStyle(key);
+                const on = !hiddenStatus.has(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleStatus(key)}
+                    aria-pressed={on}
+                    className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+                  >
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{
+                        background: on ? st.color : "transparent",
+                        border: `1.5px solid ${st.color}`,
+                      }}
+                    />
+                    <span className={on ? "font-medium" : "text-muted-foreground"}>
+                      {st.label}
+                    </span>
+                    <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
+                      {n.toLocaleString()}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+        )}
+      </div>
+
       {/* 컨트롤 오버레이 */}
       <div className="absolute top-2 left-2 flex flex-wrap items-center gap-2 z-30">
         {mapReady && (
@@ -313,10 +421,11 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
           />
         )}
         <div className="rounded-md bg-card/95 backdrop-blur px-3 py-1.5 text-xs border shadow">
-          🇯🇵 매물 <strong>{filteredRows.length}</strong>건
-          {circle && (
+          🇯🇵 {t("map.marker_count")} <strong>{filteredRows.length}</strong>{t("map.unit_case")}
+          {(circle || hiddenStatus.size > 0) && (
             <span className="text-muted-foreground ml-1">
-              / 전체 {rows.length}건 (반경 {(circle.radiusM / 1000).toFixed(1)}km)
+              / {rows.length}{t("map.unit_case")}
+              {circle ? ` (${(circle.radiusM / 1000).toFixed(1)}km)` : ""}
             </span>
           )}
         </div>
@@ -339,7 +448,7 @@ export function JpPropertyMap({ rows, fill = false }: Props) {
                 : "bg-card text-foreground border-border hover:bg-muted")
           }
         >
-          {drawMode ? "📍 드래그하여 원 그리기" : circle ? "✕ 원형 선택 해제" : "⭕ 원형 영역 선택"}
+          {drawMode ? t("map.circle_drag") : circle ? t("map.circle_clear") : t("map.circle_select")}
         </button>
       </div>
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useT } from "@/lib/i18n-client";
 
 /**
  * 지도 위치 검색 박스 — Google Geocoder (core JS API, 추가 라이브러리 불필요).
@@ -15,6 +16,7 @@ export function MapSearchBox({ region, onLocate }: {
     label: string;
   }) => void;
 }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +39,10 @@ export function MapSearchBox({ region, onLocate }: {
             label: results[0].formatted_address ?? query,
           });
         } else if (status === "ZERO_RESULTS") {
-          setError("검색 결과가 없습니다");
+          setError(t("map.search_no_result"));
         } else {
           // REQUEST_DENIED 등 — 키에 Geocoding API 미활성일 때
-          setError("위치 검색 사용 불가 (Geocoding API 설정 확인)");
+          setError(t("map.search_unavailable"));
         }
       },
     );
@@ -54,15 +56,15 @@ export function MapSearchBox({ region, onLocate }: {
           value={q}
           onChange={(e) => { setQ(e.target.value); setError(null); }}
           onKeyDown={(e) => e.key === "Enter" && search()}
-          placeholder="위치 검색"
-          aria-label="위치 검색"
+          placeholder={t("map.search_placeholder")}
+          aria-label={t("map.search_placeholder")}
           className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-muted-foreground"
         />
         <button
           type="button"
           onClick={search}
           disabled={busy}
-          aria-label="검색"
+          aria-label={t("common.search")}
           className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
           {busy ? "…" : "🔍"}

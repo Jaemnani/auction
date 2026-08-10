@@ -1,5 +1,7 @@
 "use client";
 
+import { useT } from "@/lib/i18n-client";
+
 import { useState } from "react";
 
 /**
@@ -8,6 +10,7 @@ import { useState } from "react";
  * 필터의 "검색"이 URL을 갱신하면 서버 페이지가 새 rows로 재렌더된다.
  */
 export function MapFilterOverlay({ children }: React.PropsWithChildren) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -21,7 +24,7 @@ export function MapFilterOverlay({ children }: React.PropsWithChildren) {
             : "bg-background/95 hover:bg-muted")
         }
       >
-        {open ? "✕ 필터 닫기" : "🔍 검색 · 필터"}
+        {open ? t("map.filter_close") : t("map.filter_open")}
       </button>
       {open && (
         <div className="absolute right-3 top-14 z-40 w-[min(640px,calc(100vw-24px))] max-h-[calc(100%-72px)] overflow-y-auto rounded-lg shadow-xl">

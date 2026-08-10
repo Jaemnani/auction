@@ -63,6 +63,7 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
     sale_cls_label: string | null;
     sale_standard_price: number | null;
     address_text: string | null;
+    status: string | null;
     jp_cases: { case_no: string | null; jp_courts: { name: string | null } | null } | null;
   };
   const rows: JpMapRow[] = (data as unknown as Raw[]).map((r) => ({
@@ -74,6 +75,7 @@ async function fetchMapRows(filters: JpFilters): Promise<{ rows: JpMapRow[]; cou
     sale_cls_label: r.sale_cls_label,
     sale_standard_price: r.sale_standard_price,
     address_text: r.address_text,
+    status: r.status,
   }));
 
   const [courtsRes, prefsRes] = await Promise.all([
