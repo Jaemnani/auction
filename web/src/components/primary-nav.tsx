@@ -26,8 +26,9 @@ export function PrimaryNav() {
   const isMapActive = isJp
     ? pathname === "/jp/map"
     : pathname === "/map";
-  // 최근 낙찰 탭 — KR 전용 (JP는 낙찰 확정 파이프라인 없음)
-  const isSoldActive = pathname === "/sold";
+  // 최근 낙찰 탭 — 한·일 모두 (일본은 BIT 開札結果 수집 후 노출)
+  const soldHref = isJp ? "/jp/sold" : "/sold";
+  const isSoldActive = pathname === soldHref;
 
   // shrink-0 + whitespace-nowrap 필수 — 없으면 좁은 화면에서 flex 가
   // "최근 낙찰" 을 세로로 접는다(모바일 헤더 깨짐의 직접 원인).
@@ -41,13 +42,11 @@ export function PrimaryNav() {
     <nav className="flex items-center gap-0 sm:gap-1 text-sm min-w-0 overflow-x-auto no-scrollbar">
       <Link href={listHref} className={cls(isListActive)}>{t("nav.list")}</Link>
       <Link href={mapHref} className={cls(isMapActive)}>{t("nav.map")}</Link>
-      {!isJp && (
-        <Link href="/sold" className={cls(isSoldActive)}>
-          {/* 모바일은 짧은 라벨 — "최근 낙찰" 은 390px 헤더에서 잘린다 */}
-          <span className="sm:hidden">{t("nav.sold_short")}</span>
-          <span className="hidden sm:inline">{t("nav.sold")}</span>
-        </Link>
-      )}
+      <Link href={soldHref} className={cls(isSoldActive)}>
+        {/* 모바일은 짧은 라벨 — "최근 낙찰" 은 390px 헤더에서 잘린다 */}
+        <span className="sm:hidden">{t("nav.sold_short")}</span>
+        <span className="hidden sm:inline">{t("nav.sold")}</span>
+      </Link>
     </nav>
   );
 }
