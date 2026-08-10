@@ -9,6 +9,7 @@
 #   PREFECTURES="13,27,..."  적재 대상 (기본: 47도도부현 전체)
 #   PAGE_SIZE=30             검색 페이지 크기 (BIT 상한)
 #   MAX_PAGES=12             도도부현당 페이지 상한 (기본 12)
+#   RESULT_MAX_DATES=4       매각결과: 법원당 최근 개찰기일 수 (기본 4)
 #   DETAIL_LIMIT=200         backfill-details 1회 처리량
 #   PHOTO_LIMIT=200          photos 1회 처리량
 #   MAX_DRAIN_ITERS=15       drain 루프 최대 반복
@@ -64,6 +65,8 @@ DEFAULT_PREFS="91,92,93,94,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19
 PREFECTURES="${PREFECTURES:-$DEFAULT_PREFS}"
 PAGE_SIZE="${PAGE_SIZE:-30}"
 MAX_PAGES="${MAX_PAGES:-12}"
+# 매각결과: 법원당 조회할 최근 개찰기일 수 (BIT 제공 한도가 보통 4회분)
+RESULT_MAX_DATES="${RESULT_MAX_DATES:-4}"
 DETAIL_LIMIT="${DETAIL_LIMIT:-200}"
 PHOTO_LIMIT="${PHOTO_LIMIT:-200}"
 MAX_DRAIN_ITERS="${MAX_DRAIN_ITERS:-15}"
@@ -141,6 +144,14 @@ drain "photos" crawler/scripts/jp_ingest.py photos --limit "$PHOTO_LIMIT"
 #    부분 실행을 "사라짐"으로 오인해 살아있는 매물을 대량 종결시킨 사고가 있었다.
 #    리포트가 없으면 스스로 skip (fail-closed).
 step "close-aged" crawler/scripts/jp_ingest.py close-aged --since "$RUN_SINCE_ISO"
+
+# 4.5) 매각결과(売却結果) 수집 — 낙찰가·개찰결과·입찰자수.
+#      ⚠ BIT 는 법원당 최근 개찰기일 몇 회분만 조회 가능 → **소급 불가**.
+#      매일 돌면서 쌓아야 하고 놓친 회차는 영구 손실이라 close-aged 직후,
+#      예산 여유가 있을 때 확실히 실행되도록 앞쪽에 배치한다.
+#      부수 효과: 결과가 있는 사건은 status 를 추정이 아니라 사실로 확정한다.
+step "sale-results" crawler/scripts/jp_ingest.py sale-results \
+  --max-dates "$RESULT_MAX_DATES"
 
 # 5) 파생 카테고리 (別荘/空き家/リゾート/離島) — 신규 戸建て 매물 자동 분류.
 #    GEMINI_API_KEY 있으면 룰 미분류 戸建て에 Gemini Flash Lite 보강.

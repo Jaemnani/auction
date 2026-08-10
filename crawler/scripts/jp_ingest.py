@@ -83,6 +83,11 @@ PREFECTURE_BLOCK = {
     "45": "09", "46": "09", "47": "09",
 }
 
+BLOCK_NAMES = {
+    "01": "北海道", "02": "東北", "03": "関東", "04": "北陸・甲信越",
+    "05": "東海", "06": "近畿", "07": "中国", "08": "四国", "09": "九州・沖縄",
+}
+
 
 # ---------- search ----------
 
@@ -370,6 +375,77 @@ async def cmd_backfill_details(args: argparse.Namespace) -> None:
                 n_fail += 1
 
     print(f"DONE: {n_ok} ok / {n_fail} fail")
+
+
+# ---------- sale-results (売却結果 = 낙찰가) ----------
+
+async def cmd_sale_results(args: argparse.Namespace) -> None:
+    """BIT 売却結果 수집 → jp_sale_results + status 확정.
+
+    도도부현 → 법원 → 개찰기일 순회. 조회 가능한 개찰기일이 법원당 최근 몇 회분
+    뿐이라(소급 불가) 매일 돌면서 쌓아야 한다.
+    """
+    from bit.result import SALE_TYPE_PERIOD, SALE_TYPE_SPECIAL, SaleResultFetcher
+
+    skip = set((args.skip or "").replace(" ", "").split(",")) - {""}
+    if args.prefectures:
+        prefs = [p.strip() for p in args.prefectures.split(",") if p.strip()]
+    else:
+        prefs = [p for p in PREFECTURE_BLOCK.keys() if p not in skip]
+    sale_types = ([SALE_TYPE_PERIOD, SALE_TYPE_SPECIAL]
+                  if args.include_special else [SALE_TYPE_PERIOD])
+
+    store = BitStore()
+    cfg = BitClientConfig()
+    total_rows = 0
+    total_saved = 0
+    stats_all = {"closed": 0, "aborted": 0, "skipped": 0}
+
+    for pref in prefs:
+        block = PREFECTURE_BLOCK[pref]
+        block_name = BLOCK_NAMES.get(block, "")
+        for sale_type in sale_types:
+            try:
+                # 도도부현마다 새 세션 — h08 이 h02·h04 세션에 의존하므로 격리
+                async with BitClient(cfg) as c:
+                    f = SaleResultFetcher(c, sale_type=sale_type)
+                    await f.enter(block)
+                    courts = await f.courts(
+                        block_cls=block, block_name=block_name, prefecture_id=pref,
+                    )
+                    if not courts:
+                        logger.info("pref=%s type=%s: 법원 없음", pref, sale_type)
+                        continue
+                    for court in courts:
+                        dates, extras = await f.open_bid_dates(court.court_id)
+                        if not dates:
+                            continue
+                        for d in dates[:args.max_dates]:
+                            rows = await f.results(
+                                block_cls=block, block_name=block_name,
+                                prefecture_id=pref, court_id=court.court_id,
+                                date=d, extras=extras,
+                            )
+                            if not rows:
+                                continue
+                            total_rows += len(rows)
+                            if args.dry_run:
+                                for r in rows[:3]:
+                                    print(f"  {court.name} {d.date} {r.case_no} "
+                                          f"{r.result_cls} 낙찰={r.sale_price} "
+                                          f"기준={r.sale_standard_price} 입찰={r.bidder_count}")
+                                continue
+                            total_saved += store.upsert_sale_results(rows)
+                            st = store.apply_results_to_properties(rows)
+                            for k in stats_all:
+                                stats_all[k] += st[k]
+            except Exception as e:
+                logger.warning("pref=%s type=%s failed: %s", pref, sale_type, e)
+
+    print("===== sale-results summary =====")
+    print(f"수집 {total_rows}건 · 저장 {total_saved}건")
+    print(f"status 확정: 낙찰(closed) {stats_all['closed']} · "
+          f"취하(aborted) {stats_all['aborted']} · 미적용 {stats_all['skipped']}")
 
 
 # ---------- close-aged ----------
@@ -675,6 +751,16 @@ def main() -> None:
     s = sub.add_parser("photos")
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(fn=cmd_photos)
+
+    s = sub.add_parser("sale-results", help="売却結果(낙찰가) 수집 → jp_sale_results")
+    s.add_argument("--prefectures", help="콤마 구분 도도부현 코드 (기본: 전체)")
+    s.add_argument("--skip", help="제외 도도부현 코드")
+    s.add_argument("--max-dates", type=int, default=4,
+                   help="법원당 최근 개찰기일 수 (기본 4 — BIT 제공 한도)")
+    s.add_argument("--include-special", action="store_true",
+                   help="特別売却 결과도 함께 수집")
+    s.add_argument("--dry-run", action="store_true", help="저장 없이 출력만")
+    s.set_defaults(fn=cmd_sale_results)
 
     s = sub.add_parser("close-aged")
     s.add_argument("--since", required=True, help="ISO datetime (e.g. 2026-05-11T05:30:00Z)")

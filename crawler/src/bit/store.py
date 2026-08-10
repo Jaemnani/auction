@@ -377,6 +377,82 @@ class BitStore:
 
     # ---------- close-aged ----------
 
+    # ---------- 매각결과 (売却結果) ----------
+
+    def upsert_sale_results(self, results: Iterable[Any]) -> int:
+        """SaleResult 목록 → jp_sale_results upsert.
+
+        (court_code, case_no, property_no, open_bid_date, sale_type) 유니크라
+        같은 개찰분을 다시 수집해도 중복이 안 쌓인다.
+        """
+        rows = []
+        for r in results:
+            if not r.case_no or not r.court_id:
+                continue
+            rows.append({
+                "court_code": r.court_id,
+                "case_no": r.case_no,
+                "property_no": r.property_no or "",
+                "open_bid_date": r.open_bid_date,
+                "sale_type": r.sale_type,
+                "sale_cls_label": r.sale_cls_label,
+                "sale_price": r.sale_price,
+                "sale_standard_price": r.sale_standard_price,
+                "address_text": r.address_text,
+                "result_cls": r.result_cls,
+                "bidder_count": r.bidder_count,
+                "winner_kind": r.winner_kind,
+                "raw": r.raw,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            })
+        if not rows:
+            return 0
+        n = 0
+        for i in range(0, len(rows), self.cfg.chunk_size):
+            chunk = rows[i:i + self.cfg.chunk_size]
+            self.sb.table("jp_sale_results").upsert(
+                chunk,
+                on_conflict="court_code,case_no,property_no,open_bid_date,sale_type",
+            ).execute()
+            n += len(chunk)
+        return n
+
+    def apply_results_to_properties(self, results: Iterable[Any]) -> dict[str, int]:
+        """매각결과로 jp_properties.status 를 **사실 기반**으로 확정.
+
+        기존엔 "BIT 목록에서 사라짐 = 종결" 추정이었다(오분류의 원인).
+        결과가 있으면 추정할 이유가 없다:
+            売却 → closed (낙찰 확정)
+            取下 → aborted (취하)
+            不売 → 건드리지 않음 (재매각·특별매각 대기라 여전히 진행 중)
+        """
+        stats = {"closed": 0, "aborted": 0, "skipped": 0}
+        for r in results:
+            if r.result_cls and "売却" in r.result_cls and r.sale_price is not None:
+                status = "closed"
+            elif r.result_cls and "取下" in r.result_cls:
+                status = "aborted"
+            else:
+                stats["skipped"] += 1
+                continue
+            case = (
+                self.sb.table("jp_cases")
+                .select("id")
+                .eq("court_code", r.court_id)
+                .eq("case_no", r.case_no)
+                .limit(1)
+                .execute()
+            )
+            rows = case.data or []
+            if not rows:
+                stats["skipped"] += 1
+                continue
+            self.sb.table("jp_properties").update({"status": status}).eq(
+                "case_id", rows[0]["id"],
+            ).execute()
+            stats[status] += 1
+        return stats
+
     def close_aged(
         self,
         since_iso: str,
