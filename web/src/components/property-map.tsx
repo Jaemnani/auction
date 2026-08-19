@@ -96,17 +96,30 @@ const NOISE_LEGEND: { w: number; label: string }[] = [
   { w: 75, label: "3종 다" },
 ];
 
-/** 정비구역 폴리곤 스타일 — 단계별 색 + 숨김 토글. setStyle 은 전 feature 재평가라
- *  hidden 변경 시 재로드 없이 이 함수만 다시 걸면 된다. */
+/** 정비구역 스타일 — 단계별 색 + 숨김 토글. setStyle 은 전 feature 재평가라
+ *  hidden 변경 시 재로드 없이 이 함수만 다시 걸면 된다.
+ *  폴리곤 = 구역 경계 / Point = 주소 지오코딩 대표 위치(경계 미제공 지역) —
+ *  점은 작은 원 심볼로 그려 경매 마커(핀)와 시각적으로 구분한다. */
 function applyRedevStyle(data: google.maps.Data, hidden: Set<string>) {
   data.setStyle((feature) => {
     const phase = redevPhaseKey(feature.getProperty("phase"));
     const c = REDEV_PHASE_STYLE[phase];
+    const visible = !hidden.has(phase);
+    if (feature.getGeometry()?.getType() === "Point") {
+      return {
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 5,
+          fillColor: c.fill, fillOpacity: 0.85,
+          strokeColor: "#ffffff", strokeWeight: 1.5,
+        },
+        clickable: true, zIndex: 2, visible,
+      };
+    }
     return {
       fillColor: c.fill, fillOpacity: 0.18,
       strokeColor: c.stroke, strokeWeight: 1.2, strokeOpacity: 0.9,
-      clickable: true, zIndex: 1,
-      visible: !hidden.has(phase),
+      clickable: true, zIndex: 1, visible,
     };
   });
 }
@@ -583,13 +596,20 @@ export function PropertyMap({
       const phaseText = phaseRaw && String(phaseRaw) !== style.label
         ? `${style.label} <span style="color:#a1a1aa">(${escapeHtml(String(phaseRaw))})</span>`
         : style.label;
+      // 점 feature = 구역 경계가 아니라 주소 기반 대표 위치 — 반드시 명시
+      const isPoint = e.feature.getGeometry()?.getType() === "Point";
+      const locPrecision = e.feature.getProperty("loc_precision");
+      const pointNote = !isPoint ? "" : locPrecision === "dong"
+        ? `<span style="color:#d97706;font-size:11px">대표 위치(동 단위 근사) · 구역 경계 미제공</span><br/>`
+        : `<span style="color:#a1a1aa;font-size:11px">대표 위치 · 구역 경계 미제공</span><br/>`;
       infoWindowRef.current.setContent(
         `<div style="font-size:12px;line-height:1.6;padding:2px 4px;max-width:240px">`
         + `<b>${escapeHtml(String(name))}</b><br/>`
         + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${style.fill};margin-right:4px"></span>`
         + `${kind ? escapeHtml(String(kind)) + " · " : ""}${phaseText}<br/>`
         + `<span style="color:#6b7280">구역면적 ${areaText}</span><br/>`
-        + `<span style="color:#a1a1aa;font-size:11px">자료: 정비사업 정보몽땅 · 참고용</span></div>`,
+        + pointNote
+        + `<span style="color:#a1a1aa;font-size:11px">자료: 서울·부산·경기 정비사업 공개자료 · 참고용</span></div>`,
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
@@ -931,7 +951,7 @@ export function PropertyMap({
                     })}
                   {Object.keys(redevCounts).length === 0 && (
                     <div className="text-caption-xs text-muted-foreground">
-                      지원 지역(서울)으로 이동하면 표시됩니다
+                      지원 지역(서울·부산·경기)으로 이동하면 표시됩니다
                     </div>
                   )}
                 </div>
@@ -968,9 +988,9 @@ export function PropertyMap({
                 rel="noreferrer noopener"
                 className="underline underline-offset-2"
               >
-                서울시 정비사업 정보몽땅
+                서울 정비사업 정보몽땅
               </a>
-              {" · 서울 도시공간포털 · 참고용(단계·구역은 고시 원문 확인)"}
+              {"·도시공간포털 / 부산광역시 / 경기데이터드림 · 참고용(점=대표 위치, 단계·구역은 고시 원문 확인)"}
             </div>
           )}
         </div>

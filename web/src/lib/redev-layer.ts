@@ -1,8 +1,9 @@
 // 정비사업(재개발·재건축) 구역 레이어 — public/redev/*.json
 // (crawler/scripts/redev_layer.py 생성. 정찰 근거는 docs/redev_layer_recon.md)
 //
-// 자료: 서울시 정비사업 정보몽땅 + 서울 도시공간포털(UPIS). 표시용 사본이며
-// 참고용이다. 지역(시도) 단위 파일이라 지도가 그 지역일 때만 받는다.
+// 자료: 서울(정비사업 정보몽땅+도시공간포털 UPIS, 폴리곤+점) / 부산(공공데이터
+// 포털) / 경기(경기데이터드림) — 부산·경기는 주소 지오코딩 대표 위치 점.
+// 표시용 사본이며 참고용. 지역(시도) 단위 파일이라 지도가 그 지역일 때만 받는다.
 
 export type RedevRegion = {
   code: string;   // 시도코드 앞 2자리 (11=서울)
@@ -23,7 +24,7 @@ export type RedevIndex = {
 /** 사업 단계 enum — crawler/src/redevelopment/phases.py 의 PHASES 와 값·순서 동일. */
 export const REDEV_PHASE_ORDER = [
   "planned", "designated", "committee", "union",
-  "plan_approved", "disposal", "construction", "completed", "unknown",
+  "plan_approved", "disposal", "construction", "completed", "cancelled", "unknown",
 ] as const;
 export type RedevPhase = (typeof REDEV_PHASE_ORDER)[number];
 
@@ -37,6 +38,7 @@ export const REDEV_PHASE_STYLE: Record<RedevPhase, { label: string; fill: string
   disposal:      { label: "관리처분인가",    fill: "#ea580c", stroke: "#9a3412" },
   construction:  { label: "이주·철거·착공",  fill: "#dc2626", stroke: "#991b1b" },
   completed:     { label: "준공·완료",      fill: "#16a34a", stroke: "#166534" },
+  cancelled:     { label: "해제",           fill: "#71717a", stroke: "#3f3f46" },
   unknown:       { label: "단계 미확인",    fill: "#a1a1aa", stroke: "#71717a" },
 };
 

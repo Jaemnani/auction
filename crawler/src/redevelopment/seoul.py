@@ -11,6 +11,8 @@
 
 폴리곤은 사업장과 매칭된 것만 산출한다 — UQ181 미매칭 도형(~2,900)은 이력·해제
 ·중복이 섞여 있어 "현재 정비사업" 으로 표시하면 오정보가 된다(recon 문서 참조).
+폴리곤이 없는 사업장은 대표지번을 지오코딩해 **대표 위치 점**으로 표시한다
+(부산·경기와 동일한 규칙 — 폴리곤 있으면 폴리곤, 없으면 점).
 """
 from __future__ import annotations
 
@@ -23,6 +25,9 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
+from .geocode import geocode, save_cache
 from .phases import SEOUL_STAGE_MAP, normalize_stage
 
 CLEANUP_LIST_URL = (
@@ -98,6 +103,11 @@ def fetch_biz_list() -> list[SeoulBiz]:
     if len(out) < 500:  # 실측 1,152 — 급감하면 파싱 깨진 것
         raise RuntimeError(f"목록 행이 비정상적으로 적음: {len(out)}")
     return out
+
+
+def source_count() -> int:
+    """check 용 — 원본 사업장 수."""
+    return len(fetch_biz_list())
 
 
 def _arcgis_query(layer: int, params: dict[str, str]) -> dict[str, Any]:
@@ -228,11 +238,13 @@ def build_features(*, precision: int = 6) -> tuple[dict[str, Any], dict[str, Any
 
     features = []
     missing_geom = 0
+    polygon_biz: set[int] = set()
     for b, a, layer in matched:
         mp = geoms.get((layer, a["OBJECTID"]))
         if not mp:
             missing_geom += 1
             continue
+        polygon_biz.add(id(b))
         features.append({
             "type": "Feature",
             "properties": {
@@ -248,8 +260,45 @@ def build_features(*, precision: int = 6) -> tuple[dict[str, Any], dict[str, Any
             "geometry": {"type": "MultiPolygon", "coordinates": mp},
         })
 
+    # 폴리곤이 없는 사업장 — 대표지번 지오코딩 → 점 (부산·경기와 동일 규칙)
+    point_features = 0
+    no_addr = 0
+    geocode_failed = 0
+    loc_dong = 0
+    with httpx.Client(timeout=30) as gc_client:
+        for b in biz:
+            if id(b) in polygon_biz:
+                continue
+            if not b.jibun or not b.gu:
+                no_addr += 1
+                continue
+            g = geocode(gc_client, f"서울 {b.gu} {b.jibun}")
+            if not g:
+                geocode_failed += 1
+                continue
+            if g["precision"] == "dong":
+                loc_dong += 1
+            point_features += 1
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "name": b.name,
+                    "kind": b.kind,
+                    "phase": normalize_stage(b.stage_raw, SEOUL_STAGE_MAP),
+                    "phase_raw": b.stage_raw or None,
+                    "sigungu": b.gu,
+                    "jibun": b.jibun,
+                    "area_m2": None,
+                    "record_code": b.record_code,
+                    "loc_precision": g["precision"],
+                },
+                "geometry": {"type": "Point",
+                             "coordinates": [round(g["lng"], 6), round(g["lat"], 6)]},
+            })
+    save_cache()
+
     unknown_raw = sorted({
-        b.stage_raw for b, _, _ in matched
+        b.stage_raw for b in biz
         if normalize_stage(b.stage_raw, SEOUL_STAGE_MAP) == "unknown" and b.stage_raw
     })
     report = {
@@ -259,6 +308,10 @@ def build_features(*, precision: int = 6) -> tuple[dict[str, Any], dict[str, Any
         "joined_by_name": name_hits,
         "map_id_unmatched": len(unmatched_with_id),
         "missing_geometry": missing_geom,
+        "point_features": point_features,
+        "no_addr": no_addr,
+        "geocode_failed": geocode_failed,
+        "loc_dong": loc_dong,
         "features": len(features),
         "unmapped_stage_values": unknown_raw,
     }

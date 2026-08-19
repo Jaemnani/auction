@@ -5,9 +5,12 @@
 
 ## 결론 (Go/No-go)
 
-**Go — 1차 범위는 서울.** 서울은 폴리곤+단계를 키 없이 전부 확보 가능.
-전국 통합 소스는 존재하지 않고, 타 시도는 키 신청·소스 미확정이라 후속 확장.
-웹은 `web/public/redev/index.json` 의 지역 목록 주도라 지역 추가 = 데이터만 추가.
+**Go — 서울(폴리곤+점) + 부산·경기(대표 위치 점).** 전국 통합 소스는 없고,
+지역별 소스를 어댑터로 붙인다. 표시 규칙: **폴리곤이 있으면 구역 경계, 없으면
+주소 지오코딩 대표 위치 점** (feature 에 `loc_precision` 으로 정밀도 명시 —
+`parcel`=필지, `dong`=동 단위 근사. 오지오코딩 방지로 시도 경계 밖 점은 build
+가 폐기). 웹은 `web/public/redev/index.json` 의 지역 목록 주도라 지역 추가 =
+데이터만 추가.
 
 ## 서울 (구현 완료)
 
@@ -53,19 +56,59 @@
   **표시용 사본 + 출처 상시 표기 + 원본 다운로드 미제공** (noise 레이어와 동일
   운영). 호출은 build 시 극소량(목록 1 + 속성 2 + 도형 ~12 요청).
 
-## 타 시도 (후속 — 소스 정찰만)
+## 부산 (구현 완료 — 점)
 
-| 지역 | 단계 현황 | 폴리곤 | 막힌 것 |
-|---|---|---|---|
-| 부산 | data.go.kr `6260000/MaintenanceBusinessStatus1/getMaintenanceBusiness1` — areaName/location/step 확인 | 미확정 (dynamice.busan.go.kr 정찰 필요) | 기존 `DATA_GO_KR_API_KEY` 가 이 API 에 **미신청** → 포털에서 활용신청(자동승인) 필요 (403 SERVICE_KEY_IS_NOT_REGISTERED 실측) |
-| 경기 | 경기데이터드림 "일반 정비사업 추진현황" (시군/구역명/위치/단계) | 없음 | 경기데이터드림 별도 인증키 발급 필요 |
-| 전국 폴리곤 | — | 국토부 토지이용계획정보(data.go.kr 15123973)는 LINK 형(외부 연계)이라 엔드포인트 불명. VWorld WMS 공개 목록엔 정비구역 레이어 없음(시장정비구역 lt_c_ub901 뿐). VWorld 데이터 API 카탈로그는 키·로그인 없이 조회 불가 | VWorld 키 발급 후 `LT_C_UPISUQ181` 존재 여부 확인이 다음 스텝 |
+- data.go.kr `6260000/MaintenanceBusinessStatus1/getMaintenanceBusiness1`
+  (`DATA_GO_KR_API_KEY` 활용신청 완료, 2026-08 실측 343건).
+  필드: `areaName`(구역명), `step`(단계 12종 전수 → `BUSAN_STAGE_MAP`),
+  `location`(주소, 75건 빈값), `areaUnit`(면적㎡), `aCode`.
+- **좌표·폴리곤 없음** → `location` 을 Kakao 지오코딩(대표 위치 점).
+  유형은 areaName 실재 키워드에서만 추출(없으면 None).
+- ⚠ ServiceKey 는 raw concat 필수 (httpx `params=` 재인코딩 시 403 —
+  molit 클라이언트와 동일 함정, 실측 재확인).
+- 2026-08 build: 점 235 (주소없음 75 / 지오코딩 실패 20 / **타 지역 오지오코딩
+  13 폐기** — 동명·도로명 중복이 원인. 시도 경계 박스 필터가 잡음).
+
+## 경기 (구현 완료 — 점)
+
+- 경기데이터드림 `openapi.gg.go.kr/GenrlimprvBizpropls` (`GG_DATA_API_KEY`,
+  2026-08 실측 533건). 필드: `SIGUN_NM/CD`, `BIZ_TYPE_NM`(재건축/재개발/주거
+  환경개선), `IMPRV_ZONE_NM`, `LOCPLC_ADDR`(주소), `ZONE_AR`, `BIZ_STEP_NM`
+  (단계 9종 전수 → `GG_STAGE_MAP`).
+- **좌표·폴리곤 없음** → 주소 지오코딩 점. 2026-08 build: 점 512
+  (실패 21, 동 단위 근사 137 — "~번지 일원" 등 포괄 지번은 필지 매칭 불가).
+- ⚠ **WAF 2종**: ① 서버형 기본 UA(curl/httpx) 는 차단 페이지(EUC-KR html)
+  → 브라우저 UA 필수. ② `Accept`/`Referer` 헤더를 붙이면 500 → UA 만 보낼 것.
+- 데이터셋 페이지: data.gg.go.kr infId `S62GFEEN7JMLMA0PH6CF19108891`
+  (포털 자체도 서버형 클라이언트 차단 — 서비스명은 브라우저로 확인했음).
+
+## 지오코딩 (crawler/src/redevelopment/geocode.py)
+
+- Kakao `/v2/local/search/address.json` (`KAKAO_REST_API_KEY`).
+  정제(괄호·"번지 일원"·상세층 제거) → 실패 시 지번 떼고 동 단위 폴백
+  (`precision: "dong"` 표기 — 웹 팝업이 "동 단위 근사" 로 노출).
+- 결과(실패 포함) 파일 캐시: `crawler/data/redev_geocode_cache.json` —
+  재빌드 시 재호출 없음. keep-alive 끊김 재시도 내장.
+- 서울 미매칭 사업장 714건도 같은 방식으로 점 표시 (전 사업장 100% 표시).
+
+## 전국 폴리곤 (미해결 — VWorld 보류)
+
+- 국토부 토지이용계획정보(data.go.kr 15123973)는 LINK 형(외부 연계)이라
+  엔드포인트 불명. VWorld WMS 공개 목록엔 정비구역 레이어 없음(시장정비구역
+  lt_c_ub901 뿐).
+- **VWorld 키 발급했으나 `INCORRECT_KEY` 거부** (2026-08-20 실측, 36자 형식
+  정상, domain 파라미터 변형 모두 동일) — 키 상태(승인 대기/오입력) 확인 필요.
+  해결되면 `LT_C_UPISUQ181` 존재 확인 → 부산·경기 점을 폴리곤으로 승격이
+  다음 스텝.
 
 ## 운영
 
 - 갱신: **월 1회** `python scripts/redev_layer.py check` → exit 1(사업장 수 변화)
   이면 `build` 후 `web/public/redev/` 커밋 = Vercel 배포. 크론 미편입.
+- 필요 env(루트 .env 자동 로드): `DATA_GO_KR_API_KEY`(부산),
+  `GG_DATA_API_KEY`(경기), `KAKAO_REST_API_KEY`(지오코딩).
 - 단계 원값이 새로 나타나면 build 가 `⚠ 미매핑 단계` 경고 출력 →
-  `phases.py` 의 `SEOUL_STAGE_MAP` 에 추가.
+  `phases.py` 의 지역별 STAGE_MAP 에 추가.
 - 정비몽땅 화면 개편 시 `fetch_biz_list()` 가 헤더 검증으로 실패하게 해 둠
-  (조용한 오파싱 방지).
+  (조용한 오파싱 방지). 새 지역 추가 = 어댑터 모듈(`build_features`/
+  `source_count`) + `redev_layer.py` REGIONS 등록 + phases 매핑.

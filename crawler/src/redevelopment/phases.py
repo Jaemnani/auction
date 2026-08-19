@@ -18,6 +18,7 @@ PHASES: list[tuple[str, str]] = [
     ("disposal", "관리처분인가"),
     ("construction", "이주·철거·착공"),
     ("completed", "준공·완료"),
+    ("cancelled", "해제"),
     ("unknown", "단계 미확인"),
 ]
 PHASE_KEYS = [k for k, _ in PHASES]
@@ -50,6 +51,38 @@ SEOUL_STAGE_MAP: dict[str, str] = {
     "조합해산": "completed",
     "조합청산": "completed",
     "청산 및 조합해산": "completed",
+}
+
+
+# 부산 정비사업 API step 원값 → enum (2026-08 전수 12종 실측).
+# '건축심의 및 통합심의' 는 조합설립 후·사업시행인가 전 단계라 union 으로 근사
+# (원값은 phase_raw 로 병기).
+BUSAN_STAGE_MAP: dict[str, str] = {
+    "예정구역지정": "planned",
+    "정비계획 수립 및 정비구역 지정": "designated",
+    "추진위원회 구성": "committee",
+    "조합설립인가": "union",
+    "건축심의 및 통합심의": "union",
+    "사업시행계획인가": "plan_approved",
+    "관리처분계획": "disposal",
+    "착공": "construction",
+    "준공": "completed",
+    "이전고시": "completed",
+    "조합해산": "completed",
+    "해제": "cancelled",
+}
+
+# 경기 GenrlimprvBizpropls BIZ_STEP_NM 원값 → enum (2026-08 전수 9종 실측).
+GG_STAGE_MAP: dict[str, str] = {
+    "예정구역": "planned",
+    "정비구역": "designated",
+    "추진위원회": "committee",
+    "조합설립": "union",
+    "사업시행": "plan_approved",
+    "관리처분": "disposal",
+    "착공": "construction",
+    "준공": "completed",
+    "청산": "completed",
 }
 
 
