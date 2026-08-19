@@ -23,6 +23,11 @@ import {
   loadNoiseIndex, airportsInView, loadAirportGeoJson, ZONE_STYLE,
   type NoiseIndex,
 } from "@/lib/noise-layer";
+import {
+  loadRedevIndex, redevRegionsInView, loadRedevGeoJson, redevPhaseKey,
+  REDEV_PHASE_ORDER, REDEV_PHASE_STYLE,
+  type RedevIndex, type RedevPhase,
+} from "@/lib/redev-layer";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
 
@@ -90,6 +95,21 @@ const NOISE_LEGEND: { w: number; label: string }[] = [
   { w: 80, label: "3종 나" },
   { w: 75, label: "3종 다" },
 ];
+
+/** 정비구역 폴리곤 스타일 — 단계별 색 + 숨김 토글. setStyle 은 전 feature 재평가라
+ *  hidden 변경 시 재로드 없이 이 함수만 다시 걸면 된다. */
+function applyRedevStyle(data: google.maps.Data, hidden: Set<string>) {
+  data.setStyle((feature) => {
+    const phase = redevPhaseKey(feature.getProperty("phase"));
+    const c = REDEV_PHASE_STYLE[phase];
+    return {
+      fillColor: c.fill, fillOpacity: 0.18,
+      strokeColor: c.stroke, strokeWeight: 1.2, strokeOpacity: 0.9,
+      clickable: true, zIndex: 1,
+      visible: !hidden.has(phase),
+    };
+  });
+}
 
 // legend 기본 펼침 기준 — sm 브레이크포인트와 동일.
 const DESKTOP_MQ = "(min-width: 640px)";
@@ -167,6 +187,24 @@ export function PropertyMap({
   const noiseIndexRef = useRef<NoiseIndex | null>(null);
   const noiseLoadedRef = useRef<Set<string>>(new Set());
   const noisePopupRef = useRef(false); // 현재 열린 InfoWindow 가 소음 구역 설명인가
+  // 정비사업 구역 레이어 — 기본 꺼짐. map.data 는 소음 레이어가 점유하므로
+  // 별도 google.maps.Data 인스턴스를 켤 때 만들고 끌 때 통째로 떼어낸다.
+  const [redevOn, setRedevOn] = useState(false);
+  const [hiddenPhases, setHiddenPhases] = useState<Set<string>>(() => new Set());
+  const [redevCounts, setRedevCounts] = useState<Record<string, number>>({});
+  const redevDataRef = useRef<google.maps.Data | null>(null);
+  const redevIndexRef = useRef<RedevIndex | null>(null);
+  const redevLoadedRef = useRef<Set<string>>(new Set());
+  const redevPopupRef = useRef(false); // 현재 열린 InfoWindow 가 정비구역 설명인가
+  const hiddenPhasesRef = useRef(hiddenPhases);
+  const togglePhase = useCallback((key: RedevPhase) => {
+    setHiddenPhases((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const [legendOverride, setLegendOverride] = useState<boolean | null>(null);
   const legendOpen = legendOverride ?? isDesktop;
 
@@ -470,6 +508,110 @@ export function PropertyMap({
     };
   }, [noiseOn, mapReady]);
 
+  // 정비사업 구역 오버레이 — 소음 레이어와 대칭 구조. 화면에 들어온 지역 파일만
+  // lazy 로드하고, 실패해도 지도 본체엔 영향 없게 전부 삼킨다.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (!redevOn) {
+      redevDataRef.current?.setMap(null); // 인스턴스째 제거 — feature 개별 remove 불필요
+      redevDataRef.current = null;
+      redevLoadedRef.current.clear();
+      // 건수 리셋은 토글 핸들러에서 (effect 동기 setState 회피)
+      if (redevPopupRef.current) {
+        infoWindowRef.current?.close();
+        redevPopupRef.current = false;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const data = new google.maps.Data({ map });
+    redevDataRef.current = data;
+    applyRedevStyle(data, hiddenPhasesRef.current);
+
+    // 범례 건수 — 로드된 feature 기준 단계별 집계 (실존 단계만 범례에 노출)
+    const recount = () => {
+      const counts: Record<string, number> = {};
+      data.forEach((f) => {
+        const p = redevPhaseKey(f.getProperty("phase"));
+        counts[p] = (counts[p] ?? 0) + 1;
+      });
+      setRedevCounts(counts);
+    };
+
+    const sync = async () => {
+      const b = map.getBounds();
+      if (!b || cancelled) return;
+      const index = redevIndexRef.current ?? (await loadRedevIndex());
+      if (!index || cancelled) return;
+      redevIndexRef.current = index;
+
+      const ne = b.getNorthEast(), sw = b.getSouthWest();
+      const targets = redevRegionsInView(index, {
+        west: sw.lng(), south: sw.lat(), east: ne.lng(), north: ne.lat(),
+      });
+      for (const r of targets) {
+        if (cancelled || redevLoadedRef.current.has(r.code)) continue;
+        const gj = await loadRedevGeoJson(r);
+        if (cancelled || !gj || redevLoadedRef.current.has(r.code)) continue;
+        redevLoadedRef.current.add(r.code);
+        try {
+          data.addGeoJson(gj as object);
+          recount();
+        } catch {
+          redevLoadedRef.current.delete(r.code);
+        }
+      }
+    };
+
+    void sync();
+    const idle = map.addListener("idle", () => { void sync(); });
+    const click = data.addListener("click", (e: google.maps.Data.MouseEvent) => {
+      const name = e.feature.getProperty("name");
+      if (!name || !infoWindowRef.current) return;
+      const phase = redevPhaseKey(e.feature.getProperty("phase"));
+      const style = REDEV_PHASE_STYLE[phase];
+      const phaseRaw = e.feature.getProperty("phase_raw");
+      const kind = e.feature.getProperty("kind");
+      const areaM2 = e.feature.getProperty("area_m2");
+      // 면적은 단위 토글과 무관하게 ㎡·평 병기 (클릭 시점 클로저라 훅 상태 미참조)
+      const areaText = typeof areaM2 === "number" && areaM2 > 0
+        ? `${Math.round(areaM2).toLocaleString()}㎡ · 약 ${Math.round(areaM2 / 3.3058).toLocaleString()}평`
+        : "-";
+      const phaseText = phaseRaw && String(phaseRaw) !== style.label
+        ? `${style.label} <span style="color:#a1a1aa">(${escapeHtml(String(phaseRaw))})</span>`
+        : style.label;
+      infoWindowRef.current.setContent(
+        `<div style="font-size:12px;line-height:1.6;padding:2px 4px;max-width:240px">`
+        + `<b>${escapeHtml(String(name))}</b><br/>`
+        + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${style.fill};margin-right:4px"></span>`
+        + `${kind ? escapeHtml(String(kind)) + " · " : ""}${phaseText}<br/>`
+        + `<span style="color:#6b7280">구역면적 ${areaText}</span><br/>`
+        + `<span style="color:#a1a1aa;font-size:11px">자료: 정비사업 정보몽땅 · 참고용</span></div>`,
+      );
+      infoWindowRef.current.setPosition(e.latLng);
+      infoWindowRef.current.open(map);
+      redevPopupRef.current = true;
+    });
+
+    return () => {
+      cancelled = true;
+      google.maps.event.removeListener(idle);
+      google.maps.event.removeListener(click);
+      data.setMap(null);
+      if (redevDataRef.current === data) redevDataRef.current = null;
+    };
+  }, [redevOn, mapReady]);
+
+  // 단계 토글 변경 — feature 재로드 없이 스타일만 다시 건다.
+  useEffect(() => {
+    hiddenPhasesRef.current = hiddenPhases;
+    const data = redevDataRef.current;
+    if (data) applyRedevStyle(data, hiddenPhases);
+  }, [hiddenPhases]);
+
   // 마커 갱신
   useEffect(() => {
     const map = mapRef.current;
@@ -732,23 +874,105 @@ export function PropertyMap({
                 </div>
               )}
             </div>
+
+            {/* 정비사업 구역 — 켤 때만 지역 파일을 받는다. 단계별 토글(범례). */}
+            <div className="mt-1 pt-1 border-t">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !redevOn;
+                  setRedevOn(next);
+                  if (!next) setRedevCounts({});
+                }}
+                aria-pressed={redevOn}
+                className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+              >
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-[2px] shrink-0"
+                  style={{
+                    background: redevOn ? REDEV_PHASE_STYLE.union.fill : "transparent",
+                    border: `1.5px solid ${REDEV_PHASE_STYLE.union.stroke}`,
+                  }}
+                />
+                <span className={redevOn ? "font-medium" : "text-muted-foreground"}>
+                  정비사업 (재개발·재건축)
+                </span>
+              </button>
+              {redevOn && (
+                <div className="mt-1 space-y-0.5">
+                  {REDEV_PHASE_ORDER
+                    .filter((p) => (redevCounts[p] ?? 0) > 0)
+                    .map((p) => {
+                      const on = !hiddenPhases.has(p);
+                      const c = REDEV_PHASE_STYLE[p];
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => togglePhase(p)}
+                          aria-pressed={on}
+                          className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+                        >
+                          <span
+                            className="inline-block w-2.5 h-2.5 rounded-[2px] shrink-0"
+                            style={{
+                              background: on ? c.fill : "transparent",
+                              border: `1.5px solid ${c.stroke}`,
+                            }}
+                          />
+                          <span className={on ? "font-medium" : "text-muted-foreground"}>
+                            {c.label}
+                          </span>
+                          <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
+                            {(redevCounts[p] ?? 0).toLocaleString()}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  {Object.keys(redevCounts).length === 0 && (
+                    <div className="text-caption-xs text-muted-foreground">
+                      지원 지역(서울)으로 이동하면 표시됩니다
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* 출처 표기(상시) + 참고용 고지 — 레이어가 켜져 있는 동안 반드시 노출 */}
-      {noiseOn && (
-        <div className="absolute right-3 bottom-8 z-30 max-w-[52%] rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
-          자료:{" "}
-          <a
-            href="https://www.airportnoise.kr/anps/gis"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline underline-offset-2"
-          >
-            공항소음포털
-          </a>
-          {" · 참고용(정확한 구역은 관할 지자체 확인)"}
+      {/* 출처 표기(상시) + 참고용 고지 — 레이어가 켜져 있는 동안 반드시 노출.
+          둘 다 켜지면 세로 스택. */}
+      {(noiseOn || redevOn) && (
+        <div className="absolute right-3 bottom-8 z-30 max-w-[52%] flex flex-col items-end gap-1">
+          {noiseOn && (
+            <div className="rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
+              자료:{" "}
+              <a
+                href="https://www.airportnoise.kr/anps/gis"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline underline-offset-2"
+              >
+                공항소음포털
+              </a>
+              {" · 참고용(정확한 구역은 관할 지자체 확인)"}
+            </div>
+          )}
+          {redevOn && (
+            <div className="rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
+              자료:{" "}
+              <a
+                href="https://cleanup.seoul.go.kr/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline underline-offset-2"
+              >
+                서울시 정비사업 정보몽땅
+              </a>
+              {" · 서울 도시공간포털 · 참고용(단계·구역은 고시 원문 확인)"}
+            </div>
+          )}
         </div>
       )}
 
