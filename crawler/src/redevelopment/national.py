@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import tempfile
+import unicodedata
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -31,41 +35,123 @@ SOURCE_URL = "https://www.vworld.kr/dtmk/dtmk_ntads_s002.do?dsId=30335"
 # 구역이 아닌 도형 — 정비기반시설(도로 등)은 구역 경계가 아니라 제외한다.
 _NOT_A_ZONE = re.compile(r"기반시설")
 
+# 배포본은 좌표계 2종이 병존한다. 같은 구역이 양쪽에 다 들어 있으므로
+# 하나만 읽어야 중복이 안 생긴다. 5174(구 측지계, Bessel)만 지원 —
+# proj5174 로 검증·테스트된 경로다. 5186(Korea 2000) 파일은 건너뛴다.
+_VARIANT_5174 = "_5174_"
+
+# 행정구역 통합으로 **같은 구역이 옛 코드로 한 번 더** 배포되는 파일들.
+# 예: 광주(29) 58 + 전남(46) 37 = 전남광주통합특별시(12) 95 — MNUM 은 시도코드를
+# 품고 있어 서로 안 겹치지만 실체는 같은 구역이라 둘 다 읽으면 지도에 두 번 그려진다.
+# 통합본을 정본으로 삼고 옛 파일은 건너뛴다.
+_SUPERSEDED_SUFFIXES = ("광주", "전남", "강원", "전북")
+
 
 def shp_dir() -> Path:
     return Path(os.environ.get("REDEV_SHP_DIR") or DEFAULT_SHP_DIR)
+
+
+def _is_superseded(stem: str) -> bool:
+    """`LSMD_CONT_UD602_5174_광주` → True / `..._전남광주통합특별시` → False.
+
+    ⚠ macOS 파일시스템은 한글 파일명을 NFD(자모 분해)로 돌려주므로 소스의
+    NFC 리터럴과 `==` 가 성립하지 않는다. 반드시 정규화 후 비교한다.
+    """
+    suffix = unicodedata.normalize("NFC", stem.split(_VARIANT_5174)[-1])
+    return suffix in _SUPERSEDED_SUFFIXES
+
+
+def _iter_shapefiles(root: Path):
+    """받아 둔 폴더/zip 에서 .shp 경로를 산출. zip 은 임시 디렉토리에 푼다.
+
+    같은 이름의 폴더와 zip 이 함께 있으면 폴더를 우선한다(중복 로드 방지).
+    """
+    seen: set[str] = set()
+    for shp in sorted(root.glob("LSMD_CONT_UD602_*/*.shp")):
+        stem = shp.parent.name
+        if stem in seen:
+            continue
+        seen.add(stem)
+        yield stem, shp, None
+
+    for archive in sorted(root.glob("LSMD_CONT_UD602_*.zip")):
+        stem = archive.stem
+        if stem in seen:
+            continue
+        seen.add(stem)
+        tmp = Path(tempfile.mkdtemp(prefix="redev_shp_"))
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                # zip slip 방어 — 아카이브 밖으로 나가는 경로는 무시
+                members = [m for m in zf.namelist()
+                           if not (m.startswith("/") or ".." in Path(m).parts)]
+                zf.extractall(tmp, members=members)
+        except zipfile.BadZipFile:
+            shutil.rmtree(tmp, ignore_errors=True)
+            continue
+        shps = sorted(tmp.rglob("*.shp"))
+        if not shps:
+            shutil.rmtree(tmp, ignore_errors=True)
+            continue
+        yield stem, shps[0], tmp
 
 
 def _transform(x: float, y: float) -> tuple[float, float]:
     return to_wgs84(x, y)
 
 
-def load_polygons(root: Path | None = None) -> dict[str, list[dict[str, Any]]]:
+def load_polygons(root: Path | None = None, *, verbose: bool = False,
+                  ) -> dict[str, list[dict[str, Any]]]:
     """받아 둔 SHP 전체 → {시도코드2자리: [{alias, ntfdate, sggcd, mnum, coordinates}]}.
 
-    시도 구분은 폴더명이 아니라 속성의 시군구코드(COL_ADM_SE) 앞 2자리로 한다
-    (폴더명이 '전남광주통합특별시'처럼 복수 시도를 담을 수 있어서).
+    폴더든 zip 이든 읽는다. 시도 구분은 파일명이 아니라 속성의 시군구코드
+    (COL_ADM_SE) 앞 2자리 — 파일 하나가 복수 시도를 담을 수 있어서다
+    (예: 전남광주통합특별시 = 신설 코드 12).
     """
     root = root or shp_dir()
     out: dict[str, list[dict[str, Any]]] = {}
+    seen_mnum: set[str] = set()
     if not root.exists():
         return out
-    for shp in sorted(root.glob("LSMD_CONT_UD602_*/*.shp")):
-        for attrs, mp in read_shapefile(shp, transform=_transform):
-            alias = (attrs.get("ALIAS") or "").strip()
-            if alias and _NOT_A_ZONE.search(alias):
+
+    skipped_variant: list[str] = []
+    for stem, shp, tmp in _iter_shapefiles(root):
+        try:
+            if _VARIANT_5174 not in stem:
+                skipped_variant.append(stem)
                 continue
-            sgg = (attrs.get("COL_ADM_SE") or "").strip()
-            sido = sgg[:2]
-            if not sido:
+            if _is_superseded(stem):
+                if verbose:
+                    print(f"     · {stem}: 통합 전 옛 코드 — 건너뜀")
                 continue
-            out.setdefault(sido, []).append({
-                "alias": alias or None,
-                "ntfdate": (attrs.get("NTFDATE") or "").strip() or None,
-                "sggcd": sgg or None,
-                "mnum": (attrs.get("MNUM") or "").strip() or None,
-                "coordinates": mp,
-            })
+            for attrs, mp in read_shapefile(shp, transform=_transform):
+                alias = (attrs.get("ALIAS") or "").strip()
+                if alias and _NOT_A_ZONE.search(alias):
+                    continue
+                sgg = (attrs.get("COL_ADM_SE") or "").strip()
+                sido = sgg[:2]
+                if not sido:
+                    continue
+                mnum = (attrs.get("MNUM") or "").strip()
+                if mnum:
+                    if mnum in seen_mnum:   # 같은 구역이 두 파일에 있는 경우
+                        continue
+                    seen_mnum.add(mnum)
+                out.setdefault(sido, []).append({
+                    "alias": alias or None,
+                    "ntfdate": (attrs.get("NTFDATE") or "").strip() or None,
+                    "sggcd": sgg or None,
+                    "mnum": mnum or None,
+                    "coordinates": mp,
+                })
+        finally:
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    if skipped_variant and verbose:
+        # 조용히 빠지면 "왜 이 시도가 없지"로 헤매게 되므로 알린다.
+        print(f"     · 5174 아닌 좌표계 파일 {len(skipped_variant)}개 건너뜀 "
+              f"(5186 등): {skipped_variant[:3]}…")
     return out
 
 
