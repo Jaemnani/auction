@@ -124,6 +124,7 @@ def cmd_check(_args: argparse.Namespace) -> None:
     if INDEX.exists():
         saved = {r["code"]: r for r in json.loads(INDEX.read_text())["regions"]}
     stale = []
+    failed = []
     sources = {SEOUL: seoul, **STAGE_ADAPTERS}
     for code, mod in sorted(sources.items()):
         name = SIDO_NAMES.get(code, code)
@@ -131,6 +132,7 @@ def cmd_check(_args: argparse.Namespace) -> None:
             n = mod.source_count()
         except Exception as e:  # 소스 한 곳이 죽어도 나머지는 확인
             print(f"  {code} {name}  확인 실패: {e}")
+            failed.append(code)
             continue
         meta_total = saved.get(code, {}).get("biz_total")
         mark = "NEW" if meta_total != n else "ok"
@@ -139,17 +141,53 @@ def cmd_check(_args: argparse.Namespace) -> None:
         print(f"  {code} {name}  원본 사업장 {n}  저장 시점 {meta_total or '-'}"
               f"  (feature {saved.get(code, {}).get('count', '-')})  [{mark}]")
     polys = national.load_polygons()
-    print(f"\n  SHP 폴리곤: {sum(len(v) for v in polys.values())}건 "
-          f"/ {len(polys)}개 시도  ({national.shp_dir()})")
-    print(f"[done] 갱신 필요: {len(stale)}개" + (f" {stale}" if stale else ""))
-    sys.exit(1 if stale else 0)
+    n_poly = sum(len(v) for v in polys.values())
+    print(f"\n  SHP 폴리곤: {n_poly}건 / {len(polys)}개 시도  ({national.shp_dir()})")
+    if not n_poly and _saved_polygon_regions():
+        print("     ⚠ 저장본에는 폴리곤이 있는데 여기선 0건 — 이 머신에서 build 하면"
+              " 경계가 지워집니다(가드가 막습니다).")
+    # 확인 못 한 소스를 '갱신 불필요'로 뭉개지 않는다 — 조용한 fail-open 방지
+    print(f"[done] 갱신 필요: {len(stale)}개" + (f" {stale}" if stale else "")
+          + (f" / 확인 실패: {failed}" if failed else ""))
+    sys.exit(1 if (stale or failed) else 0)
+
+
+def _saved_polygon_regions() -> list[str]:
+    """저장본에서 폴리곤을 갖고 있는 지역 코드(서울 제외 — 서울은 SHP 무관)."""
+    if not INDEX.exists():
+        return []
+    out = []
+    for r in json.loads(INDEX.read_text()).get("regions", []):
+        if r["code"] == SEOUL:
+            continue
+        f = OUT_DIR / f"{r['code']}.json"
+        if not f.exists():
+            continue
+        try:
+            fc = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if any(x["geometry"]["type"] != "Point" for x in fc.get("features", [])):
+            out.append(r["code"])
+    return out
 
 
 def cmd_build(args: argparse.Namespace) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    polys_by_sido = national.load_polygons()
+    polys_by_sido = national.load_polygons(verbose=True)
+
+    # SHP 없는 머신(크론 서버 등)에서 무심코 build 하면 커밋된 전국 폴리곤이
+    # 통째로 사라진 채 덮어써진다. 저장본에 폴리곤이 있는데 지금 못 읽었다면 중단.
     if not polys_by_sido:
-        print(f"  ⚠ SHP 폴리곤 없음 ({national.shp_dir()}) — 서울만 생성됩니다.")
+        at_risk = _saved_polygon_regions()
+        if at_risk and not args.allow_missing_shp:
+            print(f"  ✋ SHP 폴리곤을 못 읽었습니다 ({national.shp_dir()}).")
+            print(f"     저장본에는 폴리곤이 있는 지역이 {len(at_risk)}곳 "
+                  f"({', '.join(at_risk[:6])}…) — 지금 build 하면 그 경계가 지워집니다.")
+            print("     브이월드 zip 을 위 경로에 두고 다시 실행하거나,")
+            print("     정말 폴리곤 없이 만들려면 --allow-missing-shp 를 주세요.")
+            sys.exit(2)
+        print(f"  ⚠ SHP 폴리곤 없음 ({national.shp_dir()}) — API 기반 지역만 생성됩니다.")
 
     targets = [args.sido] if args.sido else sorted(
         {SEOUL, *STAGE_ADAPTERS, *polys_by_sido})
@@ -238,6 +276,8 @@ def main() -> None:
     b.add_argument("--sido", help="특정 시도만 (예: 26)")
     b.add_argument("--precision", type=int, default=6,
                    help="좌표 소수 자릿수 (기본 6 ≈ 11cm)")
+    b.add_argument("--allow-missing-shp", action="store_true",
+                   help="SHP 없이도 진행 (저장된 구역 경계가 지워짐 — 확인 후 사용)")
     b.set_defaults(func=cmd_build)
     c = sub.add_parser("check", help="원본 변화 확인 (exit 1=갱신 필요)")
     c.set_defaults(func=cmd_check)
