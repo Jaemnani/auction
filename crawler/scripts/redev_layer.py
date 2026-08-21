@@ -70,6 +70,31 @@ SIDO_NAMES = {
 # 단계(사업 진행) 소스가 있는 시도 → 어댑터 모듈
 STAGE_ADAPTERS = {"26": busan, "41": gyeonggi}
 
+# 지오코딩 오매칭 방어용 시도 경계(여유 있게). 주소만 있는 사업장을 좌표로
+# 바꿀 때 동명 지명·도로명이 타 시도에 있으면 엉뚱한 곳에 찍힌다
+# (실측: 부산 '광안2 재건축'이 세종 좌표로). 폴리곤은 공식 데이터라 대상 아님.
+SIDO_POINT_BOX = {
+    "11": (126.70, 37.40, 127.20, 37.72),   # 서울
+    "26": (128.70, 34.95, 129.35, 35.45),   # 부산
+    "41": (126.30, 36.85, 127.95, 38.35),   # 경기
+}
+
+
+def _drop_mislocated_points(fc: dict, box: tuple[float, float, float, float]) -> int:
+    """검증 박스 밖 Point 제거 — 오지오코딩은 오정보라 표시하지 않는다."""
+    w, s, e, n = box
+    kept, dropped = [], 0
+    for f in fc["features"]:
+        g = f["geometry"]
+        if g["type"] == "Point":
+            x, y = g["coordinates"]
+            if not (w <= x <= e and s <= y <= n):
+                dropped += 1
+                continue
+        kept.append(f)
+    fc["features"] = kept
+    return dropped
+
 # 서울은 UPIS 지도ID 조인이 더 정확해 SHP 대신 전용 경로를 쓴다.
 SEOUL = "11"
 
@@ -167,6 +192,13 @@ def cmd_build(args: argparse.Namespace) -> None:
                 fc = {"type": "FeatureCollection", "features": biz}
                 report["features"] = len(biz)
                 report["polygons"] = 0
+
+        box = SIDO_POINT_BOX.get(code)
+        if box:
+            n_drop = _drop_mislocated_points(fc, box)
+            if n_drop:
+                report["mislocated_dropped"] = n_drop
+            report["features"] = len(fc["features"])
 
         if not fc["features"]:
             print(f"  {code} {name}: feature 0 — 건너뜀")
