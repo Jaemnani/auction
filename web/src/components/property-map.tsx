@@ -582,8 +582,10 @@ export function PropertyMap({
     void sync();
     const idle = map.addListener("idle", () => { void sync(); });
     const click = data.addListener("click", (e: google.maps.Data.MouseEvent) => {
-      const name = e.feature.getProperty("name");
-      if (!name || !infoWindowRef.current) return;
+      if (!infoWindowRef.current) return;
+      // 공식 경계(국토부 SHP)는 구역명이 비어 있는 경우가 많다 — 이름이 없다고
+      // 팝업을 막지 않고 종류 라벨로 대체한다.
+      const name = e.feature.getProperty("name") || "정비구역";
       const phase = redevPhaseKey(e.feature.getProperty("phase"));
       const style = REDEV_PHASE_STYLE[phase];
       const phaseRaw = e.feature.getProperty("phase_raw");
@@ -602,14 +604,23 @@ export function PropertyMap({
       const pointNote = !isPoint ? "" : locPrecision === "dong"
         ? `<span style="color:#d97706;font-size:11px">대표 위치(동 단위 근사) · 구역 경계 미제공</span><br/>`
         : `<span style="color:#a1a1aa;font-size:11px">대표 위치 · 구역 경계 미제공</span><br/>`;
+      // 고시일 — 국토부 공식 경계에만 있고 그마저 일부만 채워져 있다.
+      const ntf = String(e.feature.getProperty("ntfdate") ?? "");
+      const ntfNote = /^\d{8}$/.test(ntf)
+        ? `<span style="color:#6b7280">고시일 ${ntf.slice(0, 4)}.${ntf.slice(4, 6)}.${ntf.slice(6, 8)}</span><br/>`
+        : "";
+      const srcNote = e.feature.getProperty("boundary_source") === "molit"
+        ? "국토교통부 정비구역 경계 · 지자체 공개자료"
+        : "서울 정비사업 정보몽땅 · 도시공간포털";
       infoWindowRef.current.setContent(
         `<div style="font-size:12px;line-height:1.6;padding:2px 4px;max-width:240px">`
         + `<b>${escapeHtml(String(name))}</b><br/>`
         + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${style.fill};margin-right:4px"></span>`
         + `${kind ? escapeHtml(String(kind)) + " · " : ""}${phaseText}<br/>`
         + `<span style="color:#6b7280">구역면적 ${areaText}</span><br/>`
+        + ntfNote
         + pointNote
-        + `<span style="color:#a1a1aa;font-size:11px">자료: 서울·부산·경기 정비사업 공개자료 · 참고용</span></div>`,
+        + `<span style="color:#a1a1aa;font-size:11px">자료: ${srcNote} · 참고용</span></div>`,
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
