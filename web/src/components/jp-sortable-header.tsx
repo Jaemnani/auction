@@ -17,7 +17,7 @@ type Props = {
  * 다른 field 클릭 시 asc로 시작.
  */
 export function JpSortableHeader({ field, label, className = "", align = "left" }: Props) {
-  const pathname = usePathname() ?? "/jp";
+  const pathname = usePathname() ?? "/jp/list";
   const sp = useSearchParams();
   const curSort = sp?.get("sort");
   const curDir = sp?.get("dir");

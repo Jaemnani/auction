@@ -174,7 +174,7 @@ export default async function JpDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between text-xs">
-        <Link href="/jp" className="text-muted-foreground hover:text-primary hover:underline">
+        <Link href="/jp/list" className="text-muted-foreground hover:text-primary hover:underline">
           ← 物件一覧
         </Link>
         <ExportButtons markdown={markdown} filename={mdFilename} />
