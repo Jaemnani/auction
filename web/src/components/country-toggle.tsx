@@ -5,14 +5,14 @@ import { usePathname } from "next/navigation";
 
 /**
  * 국가 선택 토글 — 헤더 우측. 라우트 기반:
- *   - /, /map, /p/* → 한국 (KR)
- *   - /jp, /jp/map, /jp/p/* → 일본 (JP)
+ *   - /, /list, /p/* → 한국 (KR)
+ *   - /jp, /jp/list, /jp/p/* → 일본 (JP)
  */
 export function CountryToggle() {
   const pathname = usePathname() ?? "/";
   const isJp = pathname === "/jp" || pathname.startsWith("/jp/");
 
-  // 같은 페이지의 카운터파트 — 매핑 단순화: 그냥 / 또는 /jp 로 이동
+  // 같은 페이지의 카운터파트 — 매핑 단순화: 그냥 / 또는 /jp (각국 지도 = 기본 랜딩) 로 이동
   const krHref = "/";
   const jpHref = "/jp";
 

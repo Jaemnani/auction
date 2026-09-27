@@ -8,7 +8,7 @@ import {
 import { getT } from "@/lib/i18n-server";
 
 type Props = {
-  action: string;                           // "/jp" or "/jp/map"
+  action: string;                           // "/jp/list" or "/jp"
   filters: JpFilters;
   prefs: { code: string; name: string }[];
   courts: { code: string; name: string }[];
