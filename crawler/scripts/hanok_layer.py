@@ -88,10 +88,16 @@ def _district_src(root: Path) -> Path | None:
     return None
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 def _write(key: str, features: list[dict], extra: dict) -> dict:
     path = OUT_DIR / f"{key}.json"
     fc = {"type": "FeatureCollection", "features": features}
-    path.write_text(json.dumps(fc, ensure_ascii=False, separators=(",", ":")))
+    _atomic_write(path, json.dumps(fc, ensure_ascii=False, separators=(",", ":")))
     entry = {
         **LAYER_META[key],
         "file": f"/hanok/{key}.json",
@@ -135,6 +141,9 @@ def cmd_build(args: argparse.Namespace) -> None:
     root = src_dir()
     old = json.loads(INDEX.read_text()) if INDEX.exists() else {}
     entries: dict = dict(old.get("layers") or {})
+    # 검증을 전부 통과한 뒤에만 쓴다 — 중간 실패 시 새 도형 + 옛 색인이
+    # 섞인 산출물이 남아 실수로 커밋되는 것을 막는다.
+    staged: dict[str, tuple[list[dict], dict]] = {}
     print(f"소스 폴더: {root}")
 
     try:
@@ -144,8 +153,7 @@ def cmd_build(args: argparse.Namespace) -> None:
                                              notice_date=args.notice_date,
                                              precision=args.precision)
             dates = sorted({f["properties"]["notice_date"] for f in feats})
-            entries["preservation"] = _write("preservation", feats,
-                                             {"notice_date": dates[-1]})
+            staged["preservation"] = (feats, {"notice_date": dates[-1]})
         else:
             print(f"  preservation 소스 없음 ({pres}) — 기존 유지")
 
@@ -154,7 +162,7 @@ def cmd_build(args: argparse.Namespace) -> None:
             feats, rep = layers.load_districts(dist, precision=args.precision)
             print(f"     SHP {rep['shp_records']:,}건 중 한옥 밀집 {rep['matched']}건")
             if feats:
-                entries["district"] = _write("district", feats, {})
+                staged["district"] = (feats, {})
             else:
                 print("     ⚠ 매칭 0건 — 기존 유지 (DISTRICT_KEYWORDS / 필드명 확인)")
         else:
@@ -165,13 +173,17 @@ def cmd_build(args: argparse.Namespace) -> None:
             feats, rep = build_registry(reg)
             print("     " + "  ".join(f"{k}={v}" for k, v in rep.items()))
             if feats:
-                entries["registry"] = _write("registry", feats, {})
+                staged["registry"] = (feats, {})
         else:
             print(f"  registry 소스 없음 ({reg}) — 기존 유지")
     except layers.LayerError as e:
         # 좌표계·공고일 문제는 조용히 넘기면 틀린 경계가 배포된다 — 전부 중단.
         print(f"  ✋ {e}")
+        print("     아무 파일도 쓰지 않았습니다.")
         sys.exit(2)
+
+    for key, (feats, extra) in staged.items():
+        entries[key] = _write(key, feats, extra)
 
     index = {
         "note": "표시용 사본. 참고용이며 정확한 구역은 공고 원문 확인 필요. "
@@ -180,7 +192,7 @@ def cmd_build(args: argparse.Namespace) -> None:
         "updated": time.strftime("%Y-%m-%d"),
         "layers": {k: entries[k] for k in LAYER_META if k in entries},
     }
-    INDEX.write_text(json.dumps(index, ensure_ascii=False, indent=1))
+    _atomic_write(INDEX, json.dumps(index, ensure_ascii=False, indent=1))
     print(f"\n[done] 레이어 {len(index['layers'])}종 → {OUT_DIR}")
 
 

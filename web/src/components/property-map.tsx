@@ -235,7 +235,9 @@ export function PropertyMap({
   const [noiseOn, setNoiseOn] = useState(false);
   const noiseIndexRef = useRef<NoiseIndex | null>(null);
   const noiseLoadedRef = useRef<Set<string>>(new Set());
-  const noisePopupRef = useRef(false); // 현재 열린 InfoWindow 가 소음 구역 설명인가
+  // 공유 InfoWindow 를 지금 어느 레이어 설명이 쓰고 있나 (매물 팝업·닫힘 = null).
+  // 값 하나라 레이어 간 배타 — 끈 레이어가 다른 레이어·매물 팝업을 닫지 않는다.
+  const popupOwnerRef = useRef<"noise" | "redev" | "hanok" | null>(null);
   // 정비사업 구역 레이어 — 기본 꺼짐. map.data 는 소음 레이어가 점유하므로
   // 별도 google.maps.Data 인스턴스를 켤 때 만들고 끌 때 통째로 떼어낸다.
   const [redevOn, setRedevOn] = useState(false);
@@ -244,7 +246,6 @@ export function PropertyMap({
   const redevDataRef = useRef<google.maps.Data | null>(null);
   const redevIndexRef = useRef<RedevIndex | null>(null);
   const redevLoadedRef = useRef<Set<string>>(new Set());
-  const redevPopupRef = useRef(false); // 현재 열린 InfoWindow 가 정비구역 설명인가
   const hiddenPhasesRef = useRef(hiddenPhases);
   const togglePhase = useCallback((key: RedevPhase) => {
     setHiddenPhases((prev) => {
@@ -260,7 +261,6 @@ export function PropertyMap({
   const [hiddenHanok, setHiddenHanok] = useState<Set<string>>(() => new Set());
   const [hanokIndex, setHanokIndex] = useState<HanokIndex | null | undefined>(undefined);
   const hanokDataRef = useRef<google.maps.Data | null>(null);
-  const hanokPopupRef = useRef(false); // 현재 열린 InfoWindow 가 한옥 레이어 설명인가
   const hiddenHanokRef = useRef(hiddenHanok);
   const toggleHanokLayer = useCallback((key: HanokLayerKey) => {
     setHiddenHanok((prev) => {
@@ -405,9 +405,7 @@ export function PropertyMap({
         // AdvancedMarkerElement 클릭은 map click으로 전파되지 않으므로 마커 팝업엔 영향 없음.
         map.addListener("click", () => {
           infoWindowRef.current?.close();
-          noisePopupRef.current = false;
-          redevPopupRef.current = false;
-          hanokPopupRef.current = false;
+          popupOwnerRef.current = null;
         });
         setMapReady(true);
       })
@@ -510,9 +508,9 @@ export function PropertyMap({
       map.data.forEach((f) => map.data.remove(f));
       noiseLoadedRef.current.clear();
       // 소음 구역 설명 팝업이 떠 있었다면 같이 닫는다 (매물 팝업은 건드리지 않음)
-      if (noisePopupRef.current) {
+      if (popupOwnerRef.current === "noise") {
         infoWindowRef.current?.close();
-        noisePopupRef.current = false;
+        popupOwnerRef.current = null;
       }
       return;
     }
@@ -565,7 +563,7 @@ export function PropertyMap({
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
-      noisePopupRef.current = true;
+      popupOwnerRef.current = "noise";
     });
 
     return () => {
@@ -586,9 +584,9 @@ export function PropertyMap({
       redevDataRef.current = null;
       redevLoadedRef.current.clear();
       // 건수 리셋은 토글 핸들러에서 (effect 동기 setState 회피)
-      if (redevPopupRef.current) {
+      if (popupOwnerRef.current === "redev") {
         infoWindowRef.current?.close();
-        redevPopupRef.current = false;
+        popupOwnerRef.current = null;
       }
       return;
     }
@@ -678,7 +676,7 @@ export function PropertyMap({
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
-      redevPopupRef.current = true;
+      popupOwnerRef.current = "redev";
     });
 
     return () => {
@@ -704,9 +702,9 @@ export function PropertyMap({
     if (!map || !mapReady) return;
 
     if (!hanokOn) {
-      if (hanokPopupRef.current) {
+      if (popupOwnerRef.current === "hanok") {
         infoWindowRef.current?.close();
-        hanokPopupRef.current = false;
+        popupOwnerRef.current = null;
       }
       return;
     }
@@ -775,7 +773,7 @@ export function PropertyMap({
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
-      hanokPopupRef.current = true;
+      popupOwnerRef.current = "hanok";
     });
 
     return () => {
@@ -801,6 +799,7 @@ export function PropertyMap({
     markersRef.current.forEach((m) => { m.map = null; });
     markersRef.current = [];
     infoWindowRef.current?.close();
+    popupOwnerRef.current = null;
 
     if (visiblePoints.length === 0) return;
 
@@ -932,10 +931,7 @@ export function PropertyMap({
         suppressUntilRef.current = performance.now() + 1200;
         iw.setContent(html);
         iw.open({ map, anchor: marker });
-        // 이제 이 창은 매물 팝업 — 레이어 토글이 닫지 않게
-        noisePopupRef.current = false;
-        redevPopupRef.current = false;
-        hanokPopupRef.current = false;
+        popupOwnerRef.current = null; // 이제 이 창은 매물 팝업 — 레이어 토글이 닫지 않게
       });
       markersRef.current.push(marker);
     }
