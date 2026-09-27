@@ -28,6 +28,11 @@ import {
   REDEV_PHASE_ORDER, REDEV_PHASE_STYLE,
   type RedevIndex, type RedevPhase,
 } from "@/lib/redev-layer";
+import {
+  loadHanokIndex, loadHanokGeoJson, hanokLayerKey,
+  HANOK_LAYER_ORDER, HANOK_STYLE, HANOK_DISCLAIMER,
+  type HanokIndex, type HanokLayerKey,
+} from "@/lib/hanok-layer";
 import { MapKeyNotice } from "@/components/map-key-notice";
 import { MapSearchBox } from "@/components/map-search-box";
 
@@ -124,6 +129,37 @@ function applyRedevStyle(data: google.maps.Data, hidden: Set<string>) {
   });
 }
 
+/** 한옥 레이어 스타일 — 레이어별 색 + 숨김 토글 (정비구역과 같은 재평가 방식).
+ *  지구단위계획(배경)이 맨 아래, 보전구역(공식 경계), 등록한옥 점 순으로 쌓는다. */
+function applyHanokStyle(data: google.maps.Data, hidden: Set<string>) {
+  data.setStyle((feature) => {
+    const key = hanokLayerKey(feature.getProperty("layer")) ?? "district";
+    const c = HANOK_STYLE[key];
+    const visible = !hidden.has(key);
+    if (feature.getGeometry()?.getType() === "Point") {
+      return {
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 4,
+          fillColor: c.fill, fillOpacity: c.fillOpacity,
+          strokeColor: c.stroke, strokeWeight: c.strokeWeight,
+        },
+        clickable: true, zIndex: 3, visible,
+      };
+    }
+    return {
+      fillColor: c.fill, fillOpacity: c.fillOpacity,
+      strokeColor: c.stroke, strokeWeight: c.strokeWeight, strokeOpacity: 0.9,
+      clickable: true, zIndex: key === "preservation" ? 2 : 0, visible,
+    };
+  });
+}
+
+function fmtYmd(v: unknown): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? ""));
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : "";
+}
+
 // legend 기본 펼침 기준 — sm 브레이크포인트와 동일.
 const DESKTOP_MQ = "(min-width: 640px)";
 function subscribeDesktopMq(cb: () => void): () => void {
@@ -199,7 +235,9 @@ export function PropertyMap({
   const [noiseOn, setNoiseOn] = useState(false);
   const noiseIndexRef = useRef<NoiseIndex | null>(null);
   const noiseLoadedRef = useRef<Set<string>>(new Set());
-  const noisePopupRef = useRef(false); // 현재 열린 InfoWindow 가 소음 구역 설명인가
+  // 공유 InfoWindow 를 지금 어느 레이어 설명이 쓰고 있나 (매물 팝업·닫힘 = null).
+  // 값 하나라 레이어 간 배타 — 끈 레이어가 다른 레이어·매물 팝업을 닫지 않는다.
+  const popupOwnerRef = useRef<"noise" | "redev" | "hanok" | null>(null);
   // 정비사업 구역 레이어 — 기본 꺼짐. map.data 는 소음 레이어가 점유하므로
   // 별도 google.maps.Data 인스턴스를 켤 때 만들고 끌 때 통째로 떼어낸다.
   const [redevOn, setRedevOn] = useState(false);
@@ -208,10 +246,24 @@ export function PropertyMap({
   const redevDataRef = useRef<google.maps.Data | null>(null);
   const redevIndexRef = useRef<RedevIndex | null>(null);
   const redevLoadedRef = useRef<Set<string>>(new Set());
-  const redevPopupRef = useRef(false); // 현재 열린 InfoWindow 가 정비구역 설명인가
   const hiddenPhasesRef = useRef(hiddenPhases);
   const togglePhase = useCallback((key: RedevPhase) => {
     setHiddenPhases((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  // 서울 한옥 레이어 — 기본 꺼짐. 정비구역과 같은 방식의 별도 Data 인스턴스.
+  // hanokIndex: undefined = 아직 안 받음, null = 데이터 없음(빌드 전).
+  const [hanokOn, setHanokOn] = useState(false);
+  const [hiddenHanok, setHiddenHanok] = useState<Set<string>>(() => new Set());
+  const [hanokIndex, setHanokIndex] = useState<HanokIndex | null | undefined>(undefined);
+  const hanokDataRef = useRef<google.maps.Data | null>(null);
+  const hiddenHanokRef = useRef(hiddenHanok);
+  const toggleHanokLayer = useCallback((key: HanokLayerKey) => {
+    setHiddenHanok((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -353,7 +405,7 @@ export function PropertyMap({
         // AdvancedMarkerElement 클릭은 map click으로 전파되지 않으므로 마커 팝업엔 영향 없음.
         map.addListener("click", () => {
           infoWindowRef.current?.close();
-          noisePopupRef.current = false;
+          popupOwnerRef.current = null;
         });
         setMapReady(true);
       })
@@ -456,9 +508,9 @@ export function PropertyMap({
       map.data.forEach((f) => map.data.remove(f));
       noiseLoadedRef.current.clear();
       // 소음 구역 설명 팝업이 떠 있었다면 같이 닫는다 (매물 팝업은 건드리지 않음)
-      if (noisePopupRef.current) {
+      if (popupOwnerRef.current === "noise") {
         infoWindowRef.current?.close();
-        noisePopupRef.current = false;
+        popupOwnerRef.current = null;
       }
       return;
     }
@@ -511,7 +563,7 @@ export function PropertyMap({
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
-      noisePopupRef.current = true;
+      popupOwnerRef.current = "noise";
     });
 
     return () => {
@@ -532,9 +584,9 @@ export function PropertyMap({
       redevDataRef.current = null;
       redevLoadedRef.current.clear();
       // 건수 리셋은 토글 핸들러에서 (effect 동기 setState 회피)
-      if (redevPopupRef.current) {
+      if (popupOwnerRef.current === "redev") {
         infoWindowRef.current?.close();
-        redevPopupRef.current = false;
+        popupOwnerRef.current = null;
       }
       return;
     }
@@ -624,7 +676,7 @@ export function PropertyMap({
       );
       infoWindowRef.current.setPosition(e.latLng);
       infoWindowRef.current.open(map);
-      redevPopupRef.current = true;
+      popupOwnerRef.current = "redev";
     });
 
     return () => {
@@ -643,6 +695,102 @@ export function PropertyMap({
     if (data) applyRedevStyle(data, hiddenPhases);
   }, [hiddenPhases]);
 
+  // 서울 한옥 오버레이 — 서울 한정 소형 파일이라 켤 때 레이어 전부를 한 번에 받는다.
+  // 실패해도 지도 본체엔 영향 없게 전부 삼킨다.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (!hanokOn) {
+      if (popupOwnerRef.current === "hanok") {
+        infoWindowRef.current?.close();
+        popupOwnerRef.current = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const data = new google.maps.Data({ map });
+    hanokDataRef.current = data;
+    applyHanokStyle(data, hiddenHanokRef.current);
+
+    void (async () => {
+      const index = await loadHanokIndex();
+      if (cancelled) return;
+      setHanokIndex(index);
+      if (!index) return;
+      for (const key of HANOK_LAYER_ORDER) {
+        const info = index.layers[key];
+        if (!info) continue;
+        const gj = await loadHanokGeoJson(info);
+        if (cancelled) return;
+        if (!gj) continue;
+        try {
+          data.addGeoJson(gj as object);
+        } catch {
+          /* 레이어 하나가 깨져도 나머지는 그린다 */
+        }
+      }
+    })();
+
+    const click = data.addListener("click", (e: google.maps.Data.MouseEvent) => {
+      if (!infoWindowRef.current) return;
+      const key = hanokLayerKey(e.feature.getProperty("layer"));
+      if (!key) return;
+      const c = HANOK_STYLE[key];
+      const prop = (k: string) => String(e.feature.getProperty(k) ?? "");
+      const swatch = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c.fill};margin-right:4px"></span>`;
+      let body: string;
+      if (key === "preservation") {
+        const date = fmtYmd(prop("notice_date"));
+        const no = prop("notice_no");
+        body = `<b>${escapeHtml(prop("name") || "한옥보전구역")}</b><br/>`
+          + `${swatch}한옥보전구역${date ? ` · 공고일 ${date}` : ""}<br/>`
+          + (no ? `<span style="color:#6b7280">${escapeHtml(no)}</span><br/>` : "")
+          + `<span style="color:#a1a1aa;font-size:11px">자료: 서울한옥포털 지정 공고(도면 디지타이징) · 참고용</span>`;
+      } else if (key === "district") {
+        body = `<b>${escapeHtml(prop("name") || "지구단위계획구역")}</b><br/>`
+          + `${swatch}한옥 동네 대략 범위(지구단위계획구역)<br/>`
+          + `<span style="color:#d97706;font-size:11px">한옥보전구역 경계가 아닙니다</span><br/>`
+          + `<span style="color:#a1a1aa;font-size:11px">자료: 서울 열린데이터광장 · 참고용</span>`;
+      } else {
+        const land = Number(e.feature.getProperty("land_m2"));
+        const floor = Number(e.feature.getProperty("floor_m2"));
+        const areas = [
+          land > 0 ? `대지 ${Math.round(land).toLocaleString()}㎡` : "",
+          floor > 0 ? `연면적 ${Math.round(floor).toLocaleString()}㎡` : "",
+        ].filter(Boolean).join(" · ");
+        const approx = prop("loc_precision") === "dong";
+        body = `<b>등록한옥${prop("reg_no") ? ` ${escapeHtml(prop("reg_no"))}` : ""}</b><br/>`
+          + `<span style="color:#6b7280">${escapeHtml(prop("addr"))}</span><br/>`
+          + (areas ? `${areas}<br/>` : "")
+          + `<span style="color:${approx ? "#d97706" : "#a1a1aa"};font-size:11px">`
+          + `${approx ? "대표 위치(동 단위 근사)" : "대표 위치(주소 기반)"} · 서울 열린데이터광장</span>`;
+      }
+      infoWindowRef.current.setContent(
+        `<div style="font-size:12px;line-height:1.6;padding:2px 4px;max-width:240px">${body}`
+        + `<br/><span style="color:#be185d;font-size:11px">${HANOK_DISCLAIMER}</span></div>`,
+      );
+      infoWindowRef.current.setPosition(e.latLng);
+      infoWindowRef.current.open(map);
+      popupOwnerRef.current = "hanok";
+    });
+
+    return () => {
+      cancelled = true;
+      google.maps.event.removeListener(click);
+      data.setMap(null);
+      if (hanokDataRef.current === data) hanokDataRef.current = null;
+    };
+  }, [hanokOn, mapReady]);
+
+  // 한옥 레이어별 토글 — 재로드 없이 스타일만 다시 건다.
+  useEffect(() => {
+    hiddenHanokRef.current = hiddenHanok;
+    const data = hanokDataRef.current;
+    if (data) applyHanokStyle(data, hiddenHanok);
+  }, [hiddenHanok]);
+
   // 마커 갱신
   useEffect(() => {
     const map = mapRef.current;
@@ -651,6 +799,7 @@ export function PropertyMap({
     markersRef.current.forEach((m) => { m.map = null; });
     markersRef.current = [];
     infoWindowRef.current?.close();
+    popupOwnerRef.current = null;
 
     if (visiblePoints.length === 0) return;
 
@@ -782,7 +931,7 @@ export function PropertyMap({
         suppressUntilRef.current = performance.now() + 1200;
         iw.setContent(html);
         iw.open({ map, anchor: marker });
-        noisePopupRef.current = false; // 이제 이 창은 매물 팝업 — 소음 토글이 닫지 않게
+        popupOwnerRef.current = null; // 이제 이 창은 매물 팝업 — 레이어 토글이 닫지 않게
       });
       markersRef.current.push(marker);
     }
@@ -968,13 +1117,80 @@ export function PropertyMap({
                 </div>
               )}
             </div>
+
+            {/* 서울 한옥 — 켤 때만 받는다. 보전구역(공식)·동네 범위(배경)·등록한옥 토글. */}
+            <div className="mt-1 pt-1 border-t">
+              <button
+                type="button"
+                onClick={() => setHanokOn((v) => !v)}
+                aria-pressed={hanokOn}
+                className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+              >
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-[2px] shrink-0"
+                  style={{
+                    background: hanokOn ? HANOK_STYLE.preservation.fill : "transparent",
+                    border: `1.5px solid ${HANOK_STYLE.preservation.stroke}`,
+                  }}
+                />
+                <span className={hanokOn ? "font-medium" : "text-muted-foreground"}>
+                  한옥 구역 (서울)
+                </span>
+              </button>
+              {hanokOn && hanokIndex !== undefined && (
+                <div className="mt-1 space-y-0.5">
+                  {HANOK_LAYER_ORDER
+                    .filter((k) => hanokIndex?.layers[k])
+                    .map((k) => {
+                      const on = !hiddenHanok.has(k);
+                      const c = HANOK_STYLE[k];
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => toggleHanokLayer(k)}
+                          aria-pressed={on}
+                          className="flex w-full items-center gap-1.5 text-left hover:opacity-80"
+                        >
+                          <span
+                            className={
+                              "inline-block w-2.5 h-2.5 shrink-0 "
+                              + (k === "registry" ? "rounded-full" : "rounded-[2px]")
+                            }
+                            style={{
+                              background: on ? c.fill : "transparent",
+                              border: `1.5px solid ${k === "registry" ? c.fill : c.stroke}`,
+                            }}
+                          />
+                          <span className={on ? "font-medium" : "text-muted-foreground"}>
+                            {c.label}
+                          </span>
+                          <span className="ml-auto pl-1.5 tabular-nums text-muted-foreground text-caption-xs">
+                            {(hanokIndex?.layers[k]?.count ?? 0).toLocaleString()}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  {hanokIndex?.layers.preservation?.notice_date && (
+                    <div className="text-caption-xs text-muted-foreground">
+                      보전구역 공고 {fmtYmd(hanokIndex.layers.preservation.notice_date)} 기준
+                    </div>
+                  )}
+                  {!hanokIndex || Object.keys(hanokIndex.layers).length === 0 ? (
+                    <div className="text-caption-xs text-muted-foreground">
+                      한옥 구역 데이터 준비 중입니다
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
       {/* 출처 표기(상시) + 참고용 고지 — 레이어가 켜져 있는 동안 반드시 노출.
           둘 다 켜지면 세로 스택. */}
-      {(noiseOn || redevOn) && (
+      {(noiseOn || redevOn || hanokOn) && (
         <div className="absolute right-3 bottom-8 z-30 max-w-[52%] flex flex-col items-end gap-1">
           {noiseOn && (
             <div className="rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
@@ -1002,6 +1218,31 @@ export function PropertyMap({
                 서울 정비사업 정보몽땅
               </a>
               {"·도시공간포털 / 부산광역시 / 경기데이터드림 · 참고용(점=대표 위치, 단계·구역은 고시 원문 확인)"}
+            </div>
+          )}
+          {hanokOn && (
+            <div className="rounded-md bg-background/95 border px-2 py-1 text-caption-xs text-muted-foreground shadow-sm">
+              {/* 면책 고지 — 한옥 레이어가 켜져 있는 동안 고정 노출 (지원금 경계라 오해 방지) */}
+              <span className="font-medium text-foreground">{HANOK_DISCLAIMER}</span>
+              <br />
+              자료:{" "}
+              <a
+                href="https://hanok.seoul.go.kr/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline underline-offset-2"
+              >
+                서울한옥포털
+              </a>
+              {" 한옥보전구역 공고 / "}
+              <a
+                href="https://data.seoul.go.kr/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline underline-offset-2"
+              >
+                서울 열린데이터광장
+              </a>
             </div>
           )}
         </div>
