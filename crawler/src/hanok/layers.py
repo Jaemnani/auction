@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import re
 import shutil
@@ -95,10 +96,10 @@ def normalize_date(v: Any) -> str | None:
     m = _DATE_RE.match(s)
     if not m:
         return None
-    y, mo, d = (int(g) for g in m.groups())
-    if not (1 <= mo <= 12 and 1 <= d <= 31):
+    try:  # 2024-02-31 같은 없는 날짜도 거른다 — 공고일이 공식 메타데이터로 게재된다
+        return datetime.date(*(int(g) for g in m.groups())).isoformat()
+    except ValueError:
         return None
-    return f"{y:04d}-{mo:02d}-{d:02d}"
 
 
 # ---- 보전구역 (QGIS 수작업 GeoJSON) -----------------------------------------

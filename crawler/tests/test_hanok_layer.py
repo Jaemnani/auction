@@ -43,8 +43,12 @@ class TestNormalizeDate(unittest.TestCase):
         for v in ("2024-03-05", "2024.3.5", "20240305", "2024.03.05"):
             self.assertEqual(layers.normalize_date(v), "2024-03-05", v)
 
+    def test_leap_day(self):
+        self.assertEqual(layers.normalize_date("2024.2.29"), "2024-02-29")
+
     def test_invalid(self):
-        for v in ("", None, "2024-13-01", "3월 5일", "2024/03"):
+        for v in ("", None, "2024-13-01", "3월 5일", "2024/03",
+                  "2024-02-31", "2023-04-31", "2023-02-29", "20240230"):
             self.assertIsNone(layers.normalize_date(v), v)
 
 
