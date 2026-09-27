@@ -78,6 +78,11 @@ class TestPreservation(unittest.TestCase):
                                        notice_date="2023-11-20")
         self.assertEqual(out[0]["properties"]["notice_date"], "2024-01-01")
 
+    def test_invalid_feature_date_not_masked_by_arg(self):
+        with self.assertRaises(LayerError):
+            layers.load_preservation(_fc(BUKCHON, {"notice_date": "2024-02-31"}),
+                                     notice_date="2023-11-20")
+
     def test_projected_without_crs_rejected(self):
         # QGIS 에서 레이어 좌표계(5174) 그대로 내보낸 실수 — 무엇인지 모르니 거부
         with self.assertRaises(LayerError):

@@ -147,7 +147,11 @@ def load_preservation(gj: dict, *, notice_date: str | None = None,
         assert_in_seoul(coords, f"보전구역 #{i + 1}")
 
         p = f.get("properties") or {}
-        date = normalize_date(p.get("notice_date") or p.get("공고일")) or default_date
+        raw_date = str(p.get("notice_date") or p.get("공고일") or "").strip()
+        # 적혀 있는데 틀린 날짜는 기본값으로 덮지 않고 멈춘다 (원본 오기 은폐 방지)
+        if raw_date and not normalize_date(raw_date):
+            raise LayerError(f"보전구역 #{i + 1}: 공고일 형식 오류 '{raw_date}' (YYYY-MM-DD)")
+        date = normalize_date(raw_date) or default_date
         if not date:
             raise LayerError(
                 f"보전구역 #{i + 1}: 공고일이 없습니다. 속성 notice_date 를 채우거나 "
