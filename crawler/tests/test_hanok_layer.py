@@ -106,6 +106,15 @@ class TestPreservation(unittest.TestCase):
         with self.assertRaises(LayerError):
             layers.load_preservation(gj, notice_date="2024-01-01")
 
+    def test_empty_geometry_rejected(self):
+        for coords in ([], [[]], [[[126.985, 37.58], [126.99, 37.58], [126.985, 37.58]]],
+                       [[[126.985, 37.58], [126.99, 37.58], [126.99, 37.585], [126.985, 37.585]]]):
+            gj = {"type": "FeatureCollection", "features": [
+                {"type": "Feature", "properties": {},
+                 "geometry": {"type": "Polygon", "coordinates": coords}}]}
+            with self.assertRaises(LayerError, msg=coords):
+                layers.load_preservation(gj, notice_date="2024-01-01")
+
     def test_empty_rejected(self):
         with self.assertRaises(LayerError):
             layers.load_preservation({"type": "FeatureCollection", "features": []},
@@ -133,6 +142,9 @@ def _make_shp(polys: list[list[tuple[float, float]]]) -> bytes:
     """테스트용 최소 Polygon .shp (단일 링)."""
     out = bytearray(100)  # 헤더 — 리더가 건너뛴다
     for i, ring in enumerate(polys):
+        if ring is None:  # NULL shape 레코드
+            out += struct.pack(">ii", i + 1, 2) + struct.pack("<i", 0)
+            continue
         xs, ys = [p[0] for p in ring], [p[1] for p in ring]
         body = struct.pack("<i4d", 5, min(xs), min(ys), max(xs), max(ys))
         body += struct.pack("<ii", 1, len(ring)) + struct.pack("<i", 0)
@@ -183,6 +195,31 @@ class TestLoadDistricts(unittest.TestCase):
         feats, _ = layers.load_districts(d)
         self.assertEqual(len(feats), 1)
         self.assertEqual(feats[0]["properties"]["name"], "인사동 지구단위계획구역")
+
+    def test_uppercase_extensions(self):
+        d = self._shp(["북촌 지구단위계획구역"])
+        (d / "UPIS.shp").rename(d / "UPIS.SHP")
+        (d / "UPIS.dbf").rename(d / "UPIS.DBF")
+        self.assertEqual(len(layers.load_districts(d)[0]), 1)          # 폴더
+        self.assertEqual(len(layers.load_districts(d / "UPIS.SHP")[0]), 1)  # .SHP 직접
+
+    def test_no_shapefile_is_error(self):
+        with self.assertRaises(LayerError):
+            layers.load_districts(Path(tempfile.mkdtemp()))
+
+    def test_missing_dbf_is_error(self):
+        d = self._shp(["북촌 지구단위계획구역"])
+        (d / "UPIS.dbf").unlink()
+        with self.assertRaises(LayerError):
+            layers.load_districts(d)
+
+    def test_matched_null_shape_is_error(self):
+        # 한옥 구역인데 도형이 없으면 조용히 빠지지 않고 멈춘다
+        d = Path(tempfile.mkdtemp())
+        (d / "a.shp").write_bytes(_make_shp([None]))
+        (d / "a.dbf").write_bytes(_make_dbf(["북촌 지구단위계획구역"]))
+        with self.assertRaises(LayerError):
+            layers.load_districts(d)
 
     def test_zip_source(self):
         import zipfile

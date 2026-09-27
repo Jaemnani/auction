@@ -29,7 +29,7 @@ from typing import Any, Iterator
 from redevelopment.national import contains
 from redevelopment.proj5174 import to_wgs84
 from redevelopment.shapefile import (
-    detect_encoding, read_dbf, read_polygons, rings_to_multipolygon,
+    read_dbf, read_polygons, rings_to_multipolygon,
 )
 
 # 서울 경계(여유 포함). 변환 결과가 여기 밖이면 좌표계를 잘못 읽은 것.
@@ -78,6 +78,20 @@ def _map_coords(coords: Any, fn) -> Any:
 
 def _round_coords(coords: Any, precision: int) -> Any:
     return _map_coords(coords, lambda x, y: (round(x, precision), round(y, precision)))
+
+
+def assert_multipolygon(mp: Any, what: str) -> None:
+    """MultiPolygon coordinates 가 실제 도형인지 — 빈 도형이 feature 로 세어져
+    게재되면 경계 일부가 조용히 빠진다."""
+    if not isinstance(mp, list) or not mp:
+        raise LayerError(f"{what}: 도형 좌표가 비어 있습니다.")
+    for poly in mp:
+        if not isinstance(poly, list) or not poly:
+            raise LayerError(f"{what}: 빈 폴리곤이 있습니다.")
+        for ring in poly:
+            pts = list(_iter_coords(ring))
+            if len(pts) < 4 or pts[0] != pts[-1]:
+                raise LayerError(f"{what}: 닫히지 않았거나 점이 4개 미만인 링이 있습니다.")
 
 
 def assert_in_seoul(coords: Any, what: str) -> None:
@@ -144,6 +158,7 @@ def load_preservation(gj: dict, *, notice_date: str | None = None,
             coords = _round_coords(coords, precision)
         if geom["type"] == "Polygon":
             coords = [coords]
+        assert_multipolygon(coords, f"보전구역 #{i + 1}")
         assert_in_seoul(coords, f"보전구역 #{i + 1}")
 
         p = f.get("properties") or {}
@@ -186,13 +201,26 @@ def match_district(attrs: dict[str, str]) -> str | None:
     return None
 
 
+def _find_shps(root: Path) -> list[Path]:
+    # 확장자 대소문자 무시 — 배포본에 .SHP/.DBF 가 흔하고 Linux glob 은 구분한다
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".shp")
+
+
+def _sidecar(shp: Path, ext: str) -> Path | None:
+    """같은 이름의 짝 파일(.dbf/.cpg)을 대소문자 무시로 찾는다."""
+    for p in shp.parent.iterdir():
+        if p.stem == shp.stem and p.suffix.lower() == ext:
+            return p
+    return None
+
+
 def iter_shapefiles(src: Path) -> Iterator[Path]:
     """.shp 파일 / 폴더 / zip 어느 것이든 .shp 경로를 산출 (zip 은 임시 해제)."""
     if src.suffix.lower() == ".shp":
         yield src
         return
     if src.is_dir():
-        yield from sorted(src.rglob("*.shp"))
+        yield from _find_shps(src)
         return
     if src.suffix.lower() == ".zip":
         tmp = Path(tempfile.mkdtemp(prefix="hanok_shp_"))
@@ -202,7 +230,7 @@ def iter_shapefiles(src: Path) -> Iterator[Path]:
                 members = [m for m in zf.namelist()
                            if not (m.startswith("/") or ".." in Path(m).parts)]
                 zf.extractall(tmp, members=members)
-            yield from sorted(tmp.rglob("*.shp"))
+            yield from _find_shps(tmp)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         return
@@ -221,25 +249,35 @@ def load_districts(src: Path, *, precision: int = 6) -> tuple[list[dict], dict]:
     out: list[dict] = []
     total = 0
     tf = lambda x, y: to_wgs84(x, y, precision=precision)  # noqa: E731
+    found = False
     for shp in iter_shapefiles(src):
+        found = True
+        dbf = _sidecar(shp, ".dbf")
+        if not dbf:
+            raise LayerError(f"지구단위계획: {shp.name} 의 .dbf 가 없습니다.")
         # .cpg 없는 배포본이 많다 — 열린데이터광장 SHP 는 cp949 (euc-kr 상위집합).
-        attrs_list = read_dbf(shp.with_suffix(".dbf"),
-                              encoding=detect_encoding(shp, default="cp949"))
+        cpg = _sidecar(shp, ".cpg")
+        enc = (cpg.read_text(errors="replace").strip() if cpg else "") or "cp949"
+        attrs_list = read_dbf(dbf, encoding=enc)
         # 원좌표 — 필터 통과분만 변환(전 구역 변환은 낭비). read_dbf 는 삭제
         # 레코드를 건너뛰므로 도형도 같은 행을 빼야 속성과 짝이 맞는다.
-        shapes = _drop_deleted(shp.with_suffix(".dbf"), read_polygons(shp))
+        shapes = _drop_deleted(dbf, read_polygons(shp))
         for attrs, rings in zip(attrs_list, shapes):
             total += 1
             name = match_district(attrs)
-            if not name or not rings:
+            if not name:
                 continue
+            what = f"지구단위계획 '{name}'"
             mp = _map_coords(rings_to_multipolygon(rings), tf)
-            assert_in_seoul(mp, f"지구단위계획 '{name}'")
+            assert_multipolygon(mp, what)
+            assert_in_seoul(mp, what)
             out.append({
                 "type": "Feature",
                 "properties": {"layer": "district", "name": name},
                 "geometry": {"type": "MultiPolygon", "coordinates": mp},
             })
+    if not found:
+        raise LayerError(f"지구단위계획: {src} 에 .shp 가 없습니다.")
     return out, {"shp_records": total, "matched": len(out)}
 
 
