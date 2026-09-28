@@ -21,7 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from redevelopment import national  # noqa: E402
 from redevelopment.proj5174 import _tm_inverse, to_wgs84  # noqa: E402
-from redevelopment.shapefile import read_dbf, rings_to_multipolygon  # noqa: E402
+from redevelopment.shapefile import (  # noqa: E402
+    read_dbf,
+    read_shapefile,
+    rings_to_multipolygon,
+)
 
 
 class TestProj5174(unittest.TestCase):
@@ -155,6 +159,64 @@ class TestReadDbf(unittest.TestCase):
             self.FIELDS, deleted={0}))
         rows = read_dbf(p, encoding="euc-kr")
         self.assertEqual([r["ALIAS"] for r in rows], ["B"])
+
+
+def _make_shp(polys: list[list[tuple[float, float]]]) -> bytes:
+    """테스트용 최소 Polygon .shp 생성 — 도형마다 단일 링."""
+    body = bytearray()
+    for n, ring in enumerate(polys, start=1):
+        xs = [x for x, _ in ring]
+        ys = [y for _, y in ring]
+        content = struct.pack("<i4d", 5, min(xs), min(ys), max(xs), max(ys))
+        content += struct.pack("<iii", 1, len(ring), 0)  # 1 part, 시작 인덱스 0
+        for x, y in ring:
+            content += struct.pack("<2d", x, y)
+        body += struct.pack(">ii", n, len(content) // 2) + content
+    header = struct.pack(">i5ii", 9994, 0, 0, 0, 0, 0, (100 + len(body)) // 2)
+    header += struct.pack("<ii4d4d", 1000, 5, 0, 0, 0, 0, 0, 0, 0, 0)
+    return header + bytes(body)
+
+
+def _square(x0: float) -> list[tuple[float, float]]:
+    # 외곽 링은 시계방향
+    return [(x0, 0.0), (x0, 1.0), (x0 + 1, 1.0), (x0 + 1, 0.0), (x0, 0.0)]
+
+
+class TestReadShapefile(unittest.TestCase):
+    FIELDS = [("ALIAS", 20), ("COL_ADM_SE", 5)]
+
+    def _write_pair(self, shp: bytes, dbf: bytes) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        (d / "zone.shp").write_bytes(shp)
+        (d / "zone.dbf").write_bytes(dbf)
+        return d / "zone.shp"
+
+    def test_deleted_dbf_record_keeps_shape_pairing(self):
+        # 레코드 0 이 삭제 → B 의 속성은 반드시 도형 #1(x0=10)과 짝지어져야 한다
+        shp = self._write_pair(
+            _make_shp([_square(0.0), _square(10.0), _square(20.0)]),
+            _make_dbf(
+                [{"ALIAS": "A", "COL_ADM_SE": "11110"},
+                 {"ALIAS": "B", "COL_ADM_SE": "26110"},
+                 {"ALIAS": "C", "COL_ADM_SE": "41110"}],
+                self.FIELDS, deleted={0}),
+        )
+        got = [(a["ALIAS"], a["COL_ADM_SE"], mp[0][0][0][0])
+               for a, mp in read_shapefile(shp)]
+        self.assertEqual(got, [("B", "26110", 10.0), ("C", "41110", 20.0)])
+
+    def test_no_deletions_pairs_in_order(self):
+        shp = self._write_pair(
+            _make_shp([_square(0.0), _square(10.0)]),
+            _make_dbf(
+                [{"ALIAS": "A", "COL_ADM_SE": "11110"},
+                 {"ALIAS": "B", "COL_ADM_SE": "26110"}],
+                self.FIELDS),
+        )
+        got = [(a["ALIAS"], mp[0][0][0][0]) for a, mp in read_shapefile(shp)]
+        self.assertEqual(got, [("A", 0.0), ("B", 10.0)])
 
 
 class TestPointInPolygon(unittest.TestCase):
