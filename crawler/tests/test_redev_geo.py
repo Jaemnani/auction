@@ -22,7 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from redevelopment import national  # noqa: E402
 from redevelopment.proj5174 import _tm_inverse, to_wgs84  # noqa: E402
 from redevelopment.shapefile import (  # noqa: E402
-    read_dbf, read_dbf_aligned, read_shapefile, rings_to_multipolygon,
+    read_dbf,
+    read_dbf_records,
+    read_shapefile,
+    rings_to_multipolygon,
 )
 
 
@@ -159,7 +162,64 @@ class TestReadDbf(unittest.TestCase):
         self.assertEqual([r["ALIAS"] for r in rows], ["B"])
 
 
-def _make_shp(polys: list[list[tuple[float, float]] | None], shape_type: int = 5) -> bytes:
+def _make_shp(polys: list[list[tuple[float, float]]]) -> bytes:
+    """테스트용 최소 Polygon .shp 생성 — 도형마다 단일 링."""
+    body = bytearray()
+    for n, ring in enumerate(polys, start=1):
+        xs = [x for x, _ in ring]
+        ys = [y for _, y in ring]
+        content = struct.pack("<i4d", 5, min(xs), min(ys), max(xs), max(ys))
+        content += struct.pack("<iii", 1, len(ring), 0)  # 1 part, 시작 인덱스 0
+        for x, y in ring:
+            content += struct.pack("<2d", x, y)
+        body += struct.pack(">ii", n, len(content) // 2) + content
+    header = struct.pack(">i5ii", 9994, 0, 0, 0, 0, 0, (100 + len(body)) // 2)
+    header += struct.pack("<ii4d4d", 1000, 5, 0, 0, 0, 0, 0, 0, 0, 0)
+    return header + bytes(body)
+
+
+def _square(x0: float) -> list[tuple[float, float]]:
+    # 외곽 링은 시계방향
+    return [(x0, 0.0), (x0, 1.0), (x0 + 1, 1.0), (x0 + 1, 0.0), (x0, 0.0)]
+
+
+class TestReadShapefile(unittest.TestCase):
+    FIELDS = [("ALIAS", 20), ("COL_ADM_SE", 5)]
+
+    def _write_pair(self, shp: bytes, dbf: bytes) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        (d / "zone.shp").write_bytes(shp)
+        (d / "zone.dbf").write_bytes(dbf)
+        return d / "zone.shp"
+
+    def test_deleted_dbf_record_keeps_shape_pairing(self):
+        # 레코드 0 이 삭제 → B 의 속성은 반드시 도형 #1(x0=10)과 짝지어져야 한다
+        shp = self._write_pair(
+            _make_shp([_square(0.0), _square(10.0), _square(20.0)]),
+            _make_dbf(
+                [{"ALIAS": "A", "COL_ADM_SE": "11110"},
+                 {"ALIAS": "B", "COL_ADM_SE": "26110"},
+                 {"ALIAS": "C", "COL_ADM_SE": "41110"}],
+                self.FIELDS, deleted={0}),
+        )
+        got = [(a["ALIAS"], a["COL_ADM_SE"], mp[0][0][0][0])
+               for a, mp in read_shapefile(shp)]
+        self.assertEqual(got, [("B", "26110", 10.0), ("C", "41110", 20.0)])
+
+    def test_no_deletions_pairs_in_order(self):
+        shp = self._write_pair(
+            _make_shp([_square(0.0), _square(10.0)]),
+            _make_dbf(
+                [{"ALIAS": "A", "COL_ADM_SE": "11110"},
+                 {"ALIAS": "B", "COL_ADM_SE": "26110"}],
+                self.FIELDS),
+        )
+        got = [(a["ALIAS"], mp[0][0][0][0]) for a, mp in read_shapefile(shp)]
+        self.assertEqual(got, [("A", 0.0), ("B", 10.0)])
+
+def _make_shp_typed(polys: list[list[tuple[float, float]] | None], shape_type: int = 5) -> bytes:
     """테스트용 최소 .shp — 단일 링 폴리곤, None = NULL shape.
 
     shape_type 15(PolygonZ) 면 XY 뒤에 Z 범위·배열을 붙인다 (실제 레이아웃).
@@ -204,12 +264,12 @@ class TestShapefileAlignment(unittest.TestCase):
         d = self._dir()
         (d / "a.dbf").write_bytes(_make_dbf(
             [{"ALIAS": "A"}, {"ALIAS": "B"}, {"ALIAS": "C"}], self.FIELDS, deleted={1}))
-        rows = read_dbf_aligned(d / "a.dbf")
+        rows = read_dbf_records(d / "a.dbf")
         self.assertEqual([r and r["ALIAS"] for r in rows], ["A", None, "C"])
 
     def test_deleted_record_does_not_shift_attributes(self):
         d = self._dir()
-        (d / "z.shp").write_bytes(_make_shp([RING_A, RING_B]))
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A, RING_B]))
         (d / "z.dbf").write_bytes(_make_dbf(
             [{"ALIAS": "삭제된구역"}, {"ALIAS": "B구역"}], self.FIELDS, deleted={0}))
         out = read_shapefile(d / "z.shp")
@@ -220,14 +280,14 @@ class TestShapefileAlignment(unittest.TestCase):
 
     def test_uppercase_extensions(self):
         d = self._dir()
-        (d / "Z.SHP").write_bytes(_make_shp([RING_A]))
+        (d / "Z.SHP").write_bytes(_make_shp_typed([RING_A]))
         (d / "Z.DBF").write_bytes(_make_dbf([{"ALIAS": "A구역"}], self.FIELDS))
         out = read_shapefile(d / "Z.SHP")
         self.assertEqual([a["ALIAS"] for a, _ in out], ["A구역"])
 
     def test_polygon_z_is_read(self):
         d = self._dir()
-        (d / "z.shp").write_bytes(_make_shp([RING_A, RING_B], shape_type=15))
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A, RING_B], shape_type=15))
         (d / "z.dbf").write_bytes(_make_dbf([{"ALIAS": "A"}, {"ALIAS": "B"}], self.FIELDS))
         out = read_shapefile(d / "z.shp")
         self.assertEqual([a["ALIAS"] for a, _ in out], ["A", "B"])
@@ -235,7 +295,7 @@ class TestShapefileAlignment(unittest.TestCase):
 
     def test_missing_dbf_raises(self):
         d = self._dir()
-        (d / "z.shp").write_bytes(_make_shp([RING_A]))
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A]))
         with self.assertRaises(FileNotFoundError):
             read_shapefile(d / "z.shp")
 
@@ -244,7 +304,7 @@ class TestShapefileAlignment(unittest.TestCase):
         root = self._dir()
         folder = root / "LSMD_CONT_UD602_5174_부산"
         folder.mkdir()
-        (folder / "X.SHP").write_bytes(_make_shp([RING_A, RING_B]))
+        (folder / "X.SHP").write_bytes(_make_shp_typed([RING_A, RING_B]))
         (folder / "X.DBF").write_bytes(_make_dbf(
             [{"ALIAS": "지워진구역", "COL_ADM_SE": "11110", "MNUM": "M1"},
              {"ALIAS": "광안2재건축", "COL_ADM_SE": "26500", "MNUM": "M2"}],

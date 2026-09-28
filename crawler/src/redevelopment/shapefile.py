@@ -26,20 +26,21 @@ POLYGON_TYPES = (SHAPE_POLYGON, 15, 25)
 def read_dbf(path: str | Path, encoding: str = "euc-kr") -> list[dict[str, str]]:
     """dBase 레코드 → dict 목록. 삭제 표시(*) 레코드는 건너뛴다.
 
-    ⚠ 삭제 레코드를 빼므로 .shp 도형과 인덱스가 어긋날 수 있다 — 도형과
-    짝지을 때는 read_dbf_aligned 를 쓸 것.
     encoding 은 같은 폴더의 .cpg 파일을 우선 쓰는 것이 안전하다
     (국토부 배포본은 EUC-KR).
+    ⚠️ 건너뛴 만큼 인덱스가 당겨지므로 .shp 도형과 짝지을 때는
+    read_dbf_records + drop_deleted 를 쓸 것.
     """
-    return [r for r in read_dbf_aligned(path, encoding) if r is not None]
+    return [r for r in read_dbf_records(path, encoding) if r is not None]
 
 
-def read_dbf_aligned(path: str | Path, encoding: str = "euc-kr",
-                     ) -> list[dict[str, str] | None]:
-    """.shp 레코드와 인덱스가 맞는 dBase 레코드 목록.
+def read_dbf_records(
+    path: str | Path, encoding: str = "euc-kr",
+) -> list[dict[str, str] | None]:
+    """read_dbf 와 같되 삭제·손상 레코드를 None 으로 남겨 원래 레코드 번호를 보존한다.
 
-    삭제 표시(*)·잘린 레코드는 None 으로 자리를 지킨다. 삭제 레코드를 그냥
-    빼면 그 뒤 모든 속성이 한 칸씩 밀려 엉뚱한 폴리곤에 붙는다 (예외 없이).
+    .shp 는 삭제 여부와 무관하게 레코드마다 도형을 하나씩 두므로,
+    인덱스로 짝지으려면 이쪽을 써야 한다.
     """
     b = Path(path).read_bytes()
     nrec, hlen, rlen = struct.unpack("<IHH", b[4:12])
@@ -56,7 +57,7 @@ def read_dbf_aligned(path: str | Path, encoding: str = "euc-kr",
     for i in range(nrec):
         start = hlen + i * rlen
         rec = b[start:start + rlen]
-        if len(rec) < rlen or rec[:1] == b"*":  # 삭제 표시 — 자리만 지킨다
+        if len(rec) < rlen or rec[:1] == b"*":  # 삭제 표시 — 자리는 지킨다
             rows.append(None)
             continue
         pos = 1
@@ -161,23 +162,37 @@ def rings_to_multipolygon(rings: list[list[tuple[float, float]]]) -> list:
     return polys
 
 
+def drop_deleted(
+    records: list[dict[str, str] | None], shapes: list[Any],
+) -> list[tuple[dict[str, str], Any]]:
+    """read_dbf_records 결과와 .shp 도형을 원래 레코드 번호로 짝짓고 삭제 레코드를 뺀다.
+
+    짝 없는 꼬리(한쪽이 더 긴 경우)는 버린다.
+    """
+    return [
+        (rec, shape)
+        for rec, shape in zip(records, shapes)
+        if rec is not None
+    ]
+
+
 def read_shapefile(
     shp_path: str | Path,
     transform: Callable[[float, float], tuple[float, float]] | None = None,
 ) -> list[tuple[dict[str, str], list]]:
-    """(속성, MultiPolygon coordinates) 목록. 도형 없는·삭제된 레코드는 제외."""
+    """(속성, MultiPolygon coordinates) 목록. 도형 없는 레코드·삭제 레코드는 제외."""
     shp_path = Path(shp_path)
     enc = detect_encoding(shp_path)
     dbf = find_sidecar(shp_path, ".dbf")
     if dbf is None:
         raise FileNotFoundError(f"{shp_path.name} 의 .dbf 가 없습니다")
-    attrs = read_dbf_aligned(dbf, encoding=enc)
+    records = read_dbf_records(dbf, encoding=enc)
     shapes = read_polygons(shp_path, transform=transform)
     out: list[tuple[dict[str, str], list]] = []
-    for i, rings in enumerate(shapes):
-        if i >= len(attrs) or attrs[i] is None or not rings:
+    for attrs, rings in drop_deleted(records, shapes):
+        if not rings:
             continue
         mp = rings_to_multipolygon(rings)
         if mp:
-            out.append((attrs[i], mp))
+            out.append((attrs, mp))
     return out

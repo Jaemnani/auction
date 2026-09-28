@@ -28,7 +28,8 @@ from typing import Any, Iterator
 from redevelopment.national import contains
 from redevelopment.proj5174 import to_wgs84
 from redevelopment.shapefile import (
-    find_sidecar, is_shp, read_dbf_aligned, read_polygons, rings_to_multipolygon,
+    drop_deleted, find_sidecar, is_shp, read_dbf_records, read_polygons,
+    rings_to_multipolygon,
 )
 
 # 서울 경계(여유 포함). 변환 결과가 여기 밖이면 좌표계를 잘못 읽은 것.
@@ -242,13 +243,10 @@ def load_districts(src: Path, *, precision: int = 6) -> tuple[list[dict], dict]:
         # .cpg 없는 배포본이 많다 — 열린데이터광장 SHP 는 cp949 (euc-kr 상위집합).
         cpg = find_sidecar(shp, ".cpg")
         enc = (cpg.read_text(errors="replace").strip() if cpg else "") or "cp949"
-        # 삭제 레코드는 None 으로 자리를 지켜 도형과 인덱스가 맞는다.
-        attrs_list = read_dbf_aligned(dbf, encoding=enc)
-        # 원좌표 — 필터 통과분만 변환(전 구역 변환은 낭비).
-        shapes = read_polygons(shp)
-        for attrs, rings in zip(attrs_list, shapes):
-            if attrs is None:
-                continue
+        # 원좌표 — 필터 통과분만 변환(전 구역 변환은 낭비). 삭제 레코드는
+        # 원래 번호로 짝지은 뒤 뺀다 (속성이 옆 도형으로 밀리지 않게).
+        records = read_dbf_records(dbf, encoding=enc)
+        for attrs, rings in drop_deleted(records, read_polygons(shp)):
             total += 1
             name = match_district(attrs)
             if not name:
