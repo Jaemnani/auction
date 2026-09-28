@@ -19,7 +19,6 @@ import datetime
 import io
 import re
 import shutil
-import struct
 import tempfile
 import unicodedata
 import zipfile
@@ -29,7 +28,8 @@ from typing import Any, Iterator
 from redevelopment.national import contains
 from redevelopment.proj5174 import to_wgs84
 from redevelopment.shapefile import (
-    read_dbf, read_polygons, rings_to_multipolygon,
+    drop_deleted, find_sidecar, is_shp, read_dbf_records, read_polygons,
+    rings_to_multipolygon,
 )
 
 # 서울 경계(여유 포함). 변환 결과가 여기 밖이면 좌표계를 잘못 읽은 것.
@@ -203,15 +203,7 @@ def match_district(attrs: dict[str, str]) -> str | None:
 
 def _find_shps(root: Path) -> list[Path]:
     # 확장자 대소문자 무시 — 배포본에 .SHP/.DBF 가 흔하고 Linux glob 은 구분한다
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".shp")
-
-
-def _sidecar(shp: Path, ext: str) -> Path | None:
-    """같은 이름의 짝 파일(.dbf/.cpg)을 대소문자 무시로 찾는다."""
-    for p in shp.parent.iterdir():
-        if p.stem == shp.stem and p.suffix.lower() == ext:
-            return p
-    return None
+    return sorted(p for p in root.rglob("*") if is_shp(p))
 
 
 def iter_shapefiles(src: Path) -> Iterator[Path]:
@@ -237,13 +229,6 @@ def iter_shapefiles(src: Path) -> Iterator[Path]:
     raise LayerError(f"지구단위계획: SHP/폴더/zip 이 아닙니다 — {src}")
 
 
-def _drop_deleted(dbf: Path, shapes: list) -> list:
-    b = dbf.read_bytes()
-    nrec, hlen, rlen = struct.unpack("<IHH", b[4:12])
-    deleted = {i for i in range(nrec) if b[hlen + i * rlen:hlen + i * rlen + 1] == b"*"}
-    return [s for i, s in enumerate(shapes) if i not in deleted]
-
-
 def load_districts(src: Path, *, precision: int = 6) -> tuple[list[dict], dict]:
     """OA-21161 SHP → 한옥 밀집 구역 feature. (features, report)."""
     out: list[dict] = []
@@ -252,17 +237,16 @@ def load_districts(src: Path, *, precision: int = 6) -> tuple[list[dict], dict]:
     found = False
     for shp in iter_shapefiles(src):
         found = True
-        dbf = _sidecar(shp, ".dbf")
+        dbf = find_sidecar(shp, ".dbf")
         if not dbf:
             raise LayerError(f"지구단위계획: {shp.name} 의 .dbf 가 없습니다.")
         # .cpg 없는 배포본이 많다 — 열린데이터광장 SHP 는 cp949 (euc-kr 상위집합).
-        cpg = _sidecar(shp, ".cpg")
+        cpg = find_sidecar(shp, ".cpg")
         enc = (cpg.read_text(errors="replace").strip() if cpg else "") or "cp949"
-        attrs_list = read_dbf(dbf, encoding=enc)
-        # 원좌표 — 필터 통과분만 변환(전 구역 변환은 낭비). read_dbf 는 삭제
-        # 레코드를 건너뛰므로 도형도 같은 행을 빼야 속성과 짝이 맞는다.
-        shapes = _drop_deleted(dbf, read_polygons(shp))
-        for attrs, rings in zip(attrs_list, shapes):
+        # 원좌표 — 필터 통과분만 변환(전 구역 변환은 낭비). 삭제 레코드는
+        # 원래 번호로 짝지은 뒤 뺀다 (속성이 옆 도형으로 밀리지 않게).
+        records = read_dbf_records(dbf, encoding=enc)
+        for attrs, rings in drop_deleted(records, read_polygons(shp)):
             total += 1
             name = match_district(attrs)
             if not name:

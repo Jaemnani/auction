@@ -23,6 +23,7 @@ from redevelopment import national  # noqa: E402
 from redevelopment.proj5174 import _tm_inverse, to_wgs84  # noqa: E402
 from redevelopment.shapefile import (  # noqa: E402
     read_dbf,
+    read_dbf_records,
     read_shapefile,
     rings_to_multipolygon,
 )
@@ -217,6 +218,103 @@ class TestReadShapefile(unittest.TestCase):
         )
         got = [(a["ALIAS"], mp[0][0][0][0]) for a, mp in read_shapefile(shp)]
         self.assertEqual(got, [("A", 0.0), ("B", 10.0)])
+
+def _make_shp_typed(polys: list[list[tuple[float, float]] | None], shape_type: int = 5) -> bytes:
+    """테스트용 최소 .shp — 단일 링 폴리곤, None = NULL shape.
+
+    shape_type 15(PolygonZ) 면 XY 뒤에 Z 범위·배열을 붙인다 (실제 레이아웃).
+    """
+    out = bytearray(100)  # 헤더 — 리더가 건너뛴다
+    for i, ring in enumerate(polys):
+        if ring is None:
+            out += struct.pack(">ii", i + 1, 2) + struct.pack("<i", 0)
+            continue
+        xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+        body = struct.pack("<i4d", shape_type, min(xs), min(ys), max(xs), max(ys))
+        body += struct.pack("<ii", 1, len(ring)) + struct.pack("<i", 0)
+        for x, y in ring:
+            body += struct.pack("<2d", x, y)
+        if shape_type == 15:
+            body += struct.pack("<2d", 0.0, 0.0) + struct.pack(f"<{len(ring)}d", *[0.0] * len(ring))
+        out += struct.pack(">ii", i + 1, len(body) // 2) + body
+    return bytes(out)
+
+
+# 부산 정비구역 bbox 안의 작은 사각형 두 개 (EPSG:5174)
+RING_A = [(380000.0, 180000.0), (380100.0, 180000.0), (380100.0, 180100.0),
+          (380000.0, 180100.0), (380000.0, 180000.0)]
+RING_B = [(390000.0, 190000.0), (390100.0, 190000.0), (390100.0, 190100.0),
+          (390000.0, 190100.0), (390000.0, 190000.0)]
+
+
+class TestShapefileAlignment(unittest.TestCase):
+    """삭제된 DBF 레코드가 속성↔도형 짝을 밀어내지 않는가.
+
+    예전 read_shapefile 은 삭제 레코드를 뺀 속성 목록과 전체 도형 목록을
+    인덱스로 짝지어, 삭제 1건 뒤의 모든 구역 이름·코드가 옆 폴리곤에 붙었다.
+    """
+    FIELDS = [("ALIAS", 20), ("COL_ADM_SE", 5), ("MNUM", 10)]
+
+    def _dir(self) -> Path:
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        return d
+
+    def test_aligned_keeps_slots(self):
+        d = self._dir()
+        (d / "a.dbf").write_bytes(_make_dbf(
+            [{"ALIAS": "A"}, {"ALIAS": "B"}, {"ALIAS": "C"}], self.FIELDS, deleted={1}))
+        rows = read_dbf_records(d / "a.dbf")
+        self.assertEqual([r and r["ALIAS"] for r in rows], ["A", None, "C"])
+
+    def test_deleted_record_does_not_shift_attributes(self):
+        d = self._dir()
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A, RING_B]))
+        (d / "z.dbf").write_bytes(_make_dbf(
+            [{"ALIAS": "삭제된구역"}, {"ALIAS": "B구역"}], self.FIELDS, deleted={0}))
+        out = read_shapefile(d / "z.shp")
+        self.assertEqual(len(out), 1)
+        attrs, mp = out[0]
+        self.assertEqual(attrs["ALIAS"], "B구역")
+        self.assertEqual(mp[0][0][0], [390000.0, 190000.0])  # B 의 도형이어야 한다
+
+    def test_uppercase_extensions(self):
+        d = self._dir()
+        (d / "Z.SHP").write_bytes(_make_shp_typed([RING_A]))
+        (d / "Z.DBF").write_bytes(_make_dbf([{"ALIAS": "A구역"}], self.FIELDS))
+        out = read_shapefile(d / "Z.SHP")
+        self.assertEqual([a["ALIAS"] for a, _ in out], ["A구역"])
+
+    def test_polygon_z_is_read(self):
+        d = self._dir()
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A, RING_B], shape_type=15))
+        (d / "z.dbf").write_bytes(_make_dbf([{"ALIAS": "A"}, {"ALIAS": "B"}], self.FIELDS))
+        out = read_shapefile(d / "z.shp")
+        self.assertEqual([a["ALIAS"] for a, _ in out], ["A", "B"])
+        self.assertEqual(out[1][1][0][0][0], [390000.0, 190000.0])
+
+    def test_missing_dbf_raises(self):
+        d = self._dir()
+        (d / "z.shp").write_bytes(_make_shp_typed([RING_A]))
+        with self.assertRaises(FileNotFoundError):
+            read_shapefile(d / "z.shp")
+
+    def test_load_polygons_end_to_end(self):
+        """national.load_polygons: 대문자 배포본 폴더 + 삭제 레코드 → 올바른 시도·이름."""
+        root = self._dir()
+        folder = root / "LSMD_CONT_UD602_5174_부산"
+        folder.mkdir()
+        (folder / "X.SHP").write_bytes(_make_shp_typed([RING_A, RING_B]))
+        (folder / "X.DBF").write_bytes(_make_dbf(
+            [{"ALIAS": "지워진구역", "COL_ADM_SE": "11110", "MNUM": "M1"},
+             {"ALIAS": "광안2재건축", "COL_ADM_SE": "26500", "MNUM": "M2"}],
+            self.FIELDS, deleted={0}))
+        out = national.load_polygons(root)
+        self.assertEqual(list(out), ["26"])            # 삭제된 서울(11) 행이 새지 않는다
+        z = out["26"][0]
+        self.assertEqual((z["alias"], z["mnum"]), ("광안2재건축", "M2"))
+        lon, lat = z["coordinates"][0][0][0]
+        self.assertEqual([lon, lat], list(to_wgs84(390000.0, 190000.0)))
 
 
 class TestPointInPolygon(unittest.TestCase):

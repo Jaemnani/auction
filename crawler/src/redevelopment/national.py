@@ -26,7 +26,7 @@ from typing import Any
 
 from .phases import normalize_stage  # noqa: F401  (소비자 편의 재수출)
 from .proj5174 import to_wgs84
-from .shapefile import read_shapefile
+from .shapefile import is_shp, read_shapefile
 
 DEFAULT_SHP_DIR = Path(os.path.expanduser("~/Downloads/download"))
 SOURCE = "국토교통부 도시및주거환경정비 정비구역(브이월드 공간정보 다운로드)"
@@ -67,14 +67,19 @@ def _iter_shapefiles(root: Path):
     같은 이름의 폴더와 zip 이 함께 있으면 폴더를 우선한다(중복 로드 방지).
     """
     seen: set[str] = set()
-    for shp in sorted(root.glob("LSMD_CONT_UD602_*/*.shp")):
+    # 확장자 대소문자 무시 (.SHP/.ZIP 배포본 — Linux glob 은 구분한다)
+    folder_shps = sorted(p for d in root.glob("LSMD_CONT_UD602_*") if d.is_dir()
+                         for p in d.iterdir() if is_shp(p))
+    for shp in folder_shps:
         stem = shp.parent.name
         if stem in seen:
             continue
         seen.add(stem)
         yield stem, shp, None
 
-    for archive in sorted(root.glob("LSMD_CONT_UD602_*.zip")):
+    archives = sorted(p for p in root.glob("LSMD_CONT_UD602_*")
+                      if p.is_file() and p.suffix.lower() == ".zip")
+    for archive in archives:
         stem = archive.stem
         if stem in seen:
             continue
@@ -89,7 +94,7 @@ def _iter_shapefiles(root: Path):
         except zipfile.BadZipFile:
             shutil.rmtree(tmp, ignore_errors=True)
             continue
-        shps = sorted(tmp.rglob("*.shp"))
+        shps = sorted(p for p in tmp.rglob("*") if is_shp(p))
         if not shps:
             shutil.rmtree(tmp, ignore_errors=True)
             continue
